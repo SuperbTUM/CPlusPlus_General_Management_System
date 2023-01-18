@@ -5,6 +5,12 @@
 #include <utility>
 using namespace std;
 
+vector<string>& helper(vector<string>& msg, string&& keyword) {
+    auto formatting = [&](string a) -> string{return (keyword == "code" || keyword == "counts")? fmt::format("{{\""+keyword+"\":{}}}", a): fmt::format("{{\""+keyword+"\":\"{}\"}}", a);};
+    std::transform(msg.begin(), msg.end(), msg.begin(), formatting);
+    return msg;
+}
+
 Server::Server()
 {
     setup(DEFAULT_PORT);
@@ -408,11 +414,15 @@ vector<string> Server::getUser(Connector& connect_fd){
     optional<pair<string, string>> constraint;
     usernames = user->getUserAttributes(constraint, "USERNAME");
 
-    for(int i=0; i<usernames.size(); i++){
-        message = fmt::format("{{\"username\": \"{}\"}}", usernames[i]);
-        // messages.push_back(message);
-        messages.push_back(std::move(message));
-    }
+    // experimental
+    usernames = helper(usernames, "username");
+    messages.insert(messages.end(), make_move_iterator(usernames.begin()), make_move_iterator(usernames.end()));
+
+    // for(int i=0; i<usernames.size(); i++){
+    //     message = fmt::format("{{\"username\": \"{}\"}}", usernames[i]);
+    //     // messages.push_back(message);
+    //     messages.push_back(std::move(message));
+    // }
     return messages;
 }
 
@@ -510,11 +520,11 @@ vector<string> Server::getTeachers(){
     messages.push_back(std::move(message));
 
     //experimental
-    #pragma omp parallel for num_threads(4)
-    for(int i=0; i<teachers.size(); i++) {
-        #pragma omp critical
-        messages.push_back(fmt::format("{{\"username\": \"{}\"}}", teachers[i]));
-    }
+    teachers = helper(teachers, "username");
+    // for(int i=0; i<teachers.size(); i++) {
+    //     messages.push_back(fmt::format("{{\"username\": \"{}\"}}", teachers[i]));
+    // }
+    messages.insert(messages.end(), make_move_iterator(teachers.begin()), make_move_iterator(teachers.end()));
     return messages;
 }
 
@@ -548,15 +558,18 @@ vector<string> Server::getSubjects(){
     // messages.push_back(message);
     messages.push_back(std::move(message));
 
-    for(int i=0; i<subject_num; i++){
-        #ifdef __cpp_lib_format
-        message = std::format("{\"subject name\": \"{}\"}", subjects[i]);
-        #else
-        message = fmt::format("{{\"subject name\": \"{}\"}}", subjects[i]);
-        #endif
-        // messages.push_back(message);
-        messages.push_back(std::move(message));
-    }
+    // experimental
+    subjects = helper(subjects, "subject name");
+    messages.insert(messages.end(), make_move_iterator(subjects.begin()), make_move_iterator(subjects.end()));
+    // for(int i=0; i<subject_num; i++){
+    //     #ifdef __cpp_lib_format
+    //     message = std::format("{\"subject name\": \"{}\"}", subjects[i]);
+    //     #else
+    //     message = fmt::format("{{\"subject name\": \"{}\"}}", subjects[i]);
+    //     #endif
+    //     // messages.push_back(message);
+    //     messages.push_back(std::move(message));
+    // }
     return messages;
 }
 
@@ -592,15 +605,18 @@ vector<string> Server::getChapters(string subject){
     // messages.push_back(message);
     messages.push_back(std::move(message));
 
-    for(int i=0; i<chapter_num; i++){
-        #ifdef __cpp_lib_format
-        message = std::format("{\"chapter name\": \"{}\"}", chapters[i]);
-        #else
-        message = fmt::format("{{\"chapter name\": \"{}\"}}", chapters[i]);
-        #endif
-        // messages.push_back(message);
-        messages.push_back(std::move(message));
-    }
+    // vectorization transform on chapters
+    chapters = helper(chapters, "chapter name");
+    messages.insert(messages.end(), make_move_iterator(chapters.begin()), make_move_iterator(chapters.end()));
+    // for(int i=0; i<chapter_num; i++){
+    //     #ifdef __cpp_lib_format
+    //     message = std::format("{\"chapter name\": \"{}\"}", chapters[i]);
+    //     #else
+    //     message = fmt::format("{{\"chapter name\": \"{}\"}}", chapters[i]);
+    //     #endif
+    //     // messages.push_back(message);
+    //     messages.push_back(std::move(message));
+    // }
     return messages;
 }
 
@@ -706,17 +722,21 @@ vector<string> Server::getQuestions(string subject, string chapter){
     // messages.push_back(message);
     messages.push_back(std::move(message));
 
-    for(int i=0; i<question_num; i++){
+    //experimental
+    question_ids = helper(question_ids, "question name");
+    messages.insert(messages.end(), make_move_iterator(question_ids.begin()), make_move_iterator(question_ids.end()));
+
+    // for(int i=0; i<question_num; i++){
         
-        #ifdef __cpp_lib_format
-        message = std::format("{\"question name\": \"{}\"}", question_ids[i]);
-        #else
-        message = fmt::format("{{\"question name\": \"{}\"}}", question_ids[i]);
-        #endif
-        // messages.push_back(message);
-        messages.push_back(std::move(message));
+    //     #ifdef __cpp_lib_format
+    //     message = std::format("{\"question name\": \"{}\"}", question_ids[i]);
+    //     #else
+    //     message = fmt::format("{{\"question name\": \"{}\"}}", question_ids[i]);
+    //     #endif
+    //     // messages.push_back(message);
+    //     messages.push_back(std::move(message));
         
-    }
+    // }
     return messages;
 }
 
