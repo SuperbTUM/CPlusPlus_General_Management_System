@@ -276,7 +276,7 @@ void Server::sendMsgToExisting(Connector& connect_fd, vector<string> messages){
         }
         // If still failed to send, archive the msg and send again afterwards
         if(bytes < 0) {
-            archived_msg[connect_fd.getFd()].push_back(messages[i]);
+            archived_msg[connect_fd.getFd()].emplace_back(messages[i]);
             // cout<<"Message sent incomplete!"<<endl;
             fmt::print("Message sent incomplete!");
         }
@@ -662,7 +662,7 @@ vector<string> Server::getTeachers(std::shared_ptr<db_user> cur_user){
     int status_code;
     vector<pair<string, string>> constraint;
     // constraint.push_back(std::make_pair("ACTIVITY", "1"));
-    constraint.push_back(std::make_pair("IDENTITY", "teacher"));
+    constraint.emplace_back(std::make_pair("IDENTITY", "teacher"));
     vector<string> teachers = cur_user->getUserAttributes(constraint, "USERNAME");
     if(teachers.empty()) status_code = 403;
     else status_code = 200; 
@@ -935,9 +935,9 @@ vector<string> Server::writeQuestion(shared_ptr<question_bank> cur_question, str
     bool existence;
     // check if the path exists
     vector<pair<string, string>> count_infos;
-    count_infos.push_back(std::make_pair("subject", subject));
-    count_infos.push_back(std::make_pair("chapter", chapter));
-    count_infos.push_back(std::make_pair("path", question_id));
+    count_infos.emplace_back(std::make_pair("subject", subject));
+    count_infos.emplace_back(std::make_pair("chapter", chapter));
+    count_infos.emplace_back(std::make_pair("path", question_id));
 
     const string target_attribute = "content";
     // int existence = question->countDistinct(target_attribute, count_infos);
@@ -1016,7 +1016,7 @@ void Server::loop()
     // experimental
     vector<Connector> target_connectors(eNum, Connector(-1));
     vector<vector<string>> messages_list(eNum, vector<string>());
-    #pragma omp parallel for num_threads(num_threads) 
+    #pragma omp parallel for schedule(auto) num_threads(num_threads) 
     for (int i = 0; i <= eNum; i++) {
         //if (FD_ISSET(i, &tempfds)) { //if the socket has activity pending
         if(events[i].data.fd == mastersocket_fd) {
