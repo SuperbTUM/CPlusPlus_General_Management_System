@@ -16,21 +16,9 @@
 using json=nlohmann::json;
 
 inline std::string escapeJsonString(std::string input){
-    for(int i=0;;i++){
-        if(i>=input.length())
-            break;
-        if(input[i]=='\n'){
-            input.erase(i,1);
-            input.insert(i,"\\n");
-            i++;
-        }else if(input[i]=='\\'){
-            input.insert(i,"\\");
-            i++;
-        }else if(input[i]=='\"'){
-            input.insert(i,"\\");
-            i++;
-        }
-    }
+    regex re1("\\n");
+    regex re2("\\\\");
+    input = regex_replace(regex_replace(input, re2, "\\\\"), re1, "\\n");
     return input;
 }
 

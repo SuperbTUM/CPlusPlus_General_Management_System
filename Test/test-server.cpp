@@ -26,19 +26,10 @@ using json=nlohmann::json;
 #define PORT 9999
 #define BUFF_LENGTH 4096
 
-std::string escapeJsonString(std::string input){
-    for(int i=0;;i++){
-        if(i>=input.length())
-            break;
-        if(input[i]=='\n'){
-            input.erase(i,1);
-            input.insert(i,"\\n");
-            i++;
-        }else if(input[i]=='\\'){
-            input.insert(i,"\\");
-            i++;
-    }
-    }
+inline std::string escapeJsonString(std::string input){
+    regex re1("\\n");
+    regex re2("\\\\");
+    input = regex_replace(regex_replace(input, re2, "\\\\"), re1, "\\n");
     return input;
 }
      
