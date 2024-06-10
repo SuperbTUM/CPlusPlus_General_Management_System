@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <regex>
 // #include <openssl/ssl.h>
 // #include <openssl/err.h>
 // #include <nlohmann/json.hpp>

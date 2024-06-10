@@ -7,6 +7,7 @@
 #include <iostream>
 #include <algorithm>
 #include <sstream>
+#include <regex>
 #include "tcpclientsocket.h"
 #include <nlohmann/json.hpp>
 #include <unistd.h>

@@ -14,6 +14,7 @@
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <regex>
 //#include "date.h"
 #include "nlohmann/json.hpp"
 using json=nlohmann::json;
