@@ -390,10 +390,11 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     else{
         // cout<<"Invalid command or not enough permission."<<endl;
         fmt::print("Invalid command or not enough permission.\n");
+        const int status_code = 403;
         #ifdef __cpp_lib_format
-        string message = std::format("{\"code\": {}}", 403);
+        string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
         #else
-        string message = fmt::format("{{\"code\": {}}}", 403);
+        string message = fmt::format("{{\"code\": {}}}", status_code);
         #endif
         messages.emplace_back(std::forward<string>(message));
     } 
@@ -454,7 +455,7 @@ vector<string> Server::authenticateUser(std::shared_ptr<db_user> cur_user, Conne
     }
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}, \"identity\": \"{}\"}", status_code, identity);
+    string message = std::vformat("{\"code\": {}, \"identity\": \"{}\"}", std::make_format_args(status_code, identity));
     #else
     string message = fmt::format("{{\"code\": {}, \"identity\": \"{}\"}}", status_code, identity);
     #endif
@@ -481,7 +482,7 @@ vector<string> Server::registerUser(std::shared_ptr<db_user> cur_user, Connector
     }
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -514,7 +515,7 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
     }
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -558,7 +559,7 @@ vector<string> Server::getUser(std::shared_ptr<db_user> cur_user, Connector& con
 
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}, \"counts\": {}}", status_code, numUsers);
+    string message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, numUsers));
     #else
     string message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, numUsers);
     #endif
@@ -600,7 +601,7 @@ vector<string> Server::deleteUser(std::shared_ptr<db_user> cur_user, Connector& 
 
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -649,7 +650,7 @@ vector<string> Server::deleteUserSelf(std::shared_ptr<db_user> cur_user, Connect
 
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -668,7 +669,8 @@ vector<string> Server::getTeachers(std::shared_ptr<db_user> cur_user){
     else status_code = 200; 
     vector<string> messages;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}, \"counts\": {}}", status_code, teachers.size());
+    const int teachers_size = teachers.size();
+    string message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, teachers_size));
     #else
     string message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, teachers.size());
     #endif
@@ -700,7 +702,7 @@ vector<string> Server::getSubjects(shared_ptr<question_bank> cur_question){
     if(subject_num < 0){
         status_code = 403;
         #ifdef __cpp_lib_format
-        message = std::format("{\"code\": {}, \"counts\": {}}", status_code, subject_num);
+        message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, subject_num));
         #else
         message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, subject_num);
         #endif
@@ -713,7 +715,8 @@ vector<string> Server::getSubjects(shared_ptr<question_bank> cur_question){
     optional<pair<string, string>> constraint;
     vector<string> subjects = cur_question->getQuestionAttributes(constraint, target_attribute);
     #ifdef __cpp_lib_format
-    message = std::format("{\"code\": {}, \"counts\": {}}", status_code, subjects.size());
+    const int subjects_size = subjects.size();
+    message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, subjects_size));
     #else
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, subjects.size());
     #endif
@@ -740,7 +743,7 @@ vector<string> Server::getChapters(shared_ptr<question_bank> cur_question, strin
     if(chapter_num < 0){
         status_code = 403;
         #ifdef __cpp_lib_format
-        message = std::format("{\"code\": {}, \"counts\": {}}", status_code, chapter_num);
+        message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, chapter_num));
         #else
         message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, chapter_num);
         #endif
@@ -753,7 +756,7 @@ vector<string> Server::getChapters(shared_ptr<question_bank> cur_question, strin
     constraint = std::make_pair("subject", subject);
     vector<string> chapters = cur_question->getQuestionAttributes(constraint, target_attribute);
     #ifdef __cpp_lib_format
-    message = std::format("{\"code\": {}, \"counts\": {}}", status_code, chapter_num);
+    message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, chapter_num));
     #else
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, chapter_num);
     #endif
@@ -806,7 +809,7 @@ vector<string> Server::addSubject(shared_ptr<question_bank> cur_question, string
         status_code = 403;
     }
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -862,7 +865,7 @@ vector<string> Server::addChapter(shared_ptr<question_bank> cur_question, string
     }
 
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -881,7 +884,7 @@ vector<string> Server::getQuestions(shared_ptr<question_bank> cur_question, stri
     if(question_num < 0){
         status_code = 403;
         #ifdef __cpp_lib_format
-        message = std::format("{\"code\": {}, \"counts\": {}}", status_code, question_num);
+        message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, question_num));
         #else
         message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, question_num);
         #endif
@@ -893,7 +896,8 @@ vector<string> Server::getQuestions(shared_ptr<question_bank> cur_question, stri
 
     vector<string> question_ids = cur_question->getQuestionAttributes(count_infos, target_attribute);
     #ifdef __cpp_lib_format
-    message = std::format("{\"code\": {}, \"counts\": {}}", status_code, question_ids.size());
+    const int questions_size = question_ids.size();
+    message = std::vformat("{\"code\": {}, \"counts\": {}}", std::make_format_args(status_code, questions_size));
     #else
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, question_ids.size());
     #endif
@@ -920,7 +924,7 @@ vector<string> Server::getQuestions(shared_ptr<question_bank> cur_question, stri
 
     status_code = 200;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}, \"question text\": \"{}\"}", status_code, question_content);
+    string message = std::vformat("{\"code\": {}, \"question text\": \"{}\"}", std::make_format_args(status_code, question_content));
     #else
     string message = fmt::format("{{\"code\": {}, \"question text\": \"{}\"}}", status_code, question_content);
     #endif
@@ -974,7 +978,7 @@ vector<string> Server::writeQuestion(shared_ptr<question_bank> cur_question, str
     }
 
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif
@@ -991,7 +995,7 @@ vector<string> Server::deleteQuestion(shared_ptr<question_bank> cur_question, st
     if(rc >= 0) status_code = 200;
     else status_code = 404;
     #ifdef __cpp_lib_format
-    string message = std::format("{\"code\": {}}", status_code);
+    string message = std::vformat("{\"code\": {}}", std::make_format_args(status_code));
     #else
     string message = fmt::format("{{\"code\": {}}}", status_code);
     #endif

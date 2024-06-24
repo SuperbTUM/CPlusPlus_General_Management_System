@@ -21,12 +21,12 @@ question_bank::~question_bank(){
 void question_bank::create(bool clear/*= false*/, const char* database_name/*= "questions.db"*/){
    // rc = sqlite3_open(database_name, &db);
    // CREATE/OPEN
-   rc = sqlite3_open_v2(database_name, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, 
+   rc = sqlite3_open_v2(database_name, std::out_ptr(db), SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, 
                         NULL);
    
    if(rc != SQLITE_OK) {
       fprintf(stderr, "No such database, creating a new one: %s\n", sqlite3_errmsg(db));
-      rc = sqlite3_open_v2(database_name, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, 
+      rc = sqlite3_open_v2(database_name, std::out_ptr(db), SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, 
                      NULL);
 
    } else {

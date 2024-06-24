@@ -2,7 +2,7 @@
 
 We developed a complicated full stack application with socket-based single-server-multi-client connection. The front-end of this application is window-based Qt6 and back-end is SQLite3/MongoDB(experimental). Serveral highlights of this application are:
 
-* Modern **C++20**
+* Modern **C++23**
 * Multiplexing with epoll (unix-based system only) to achieve pseudo-concurrency
 * Multi-threading & vectorization
 * A variety of database selection
@@ -21,7 +21,7 @@ Other than performance, we also take safety into consideration. We had pragma ke
 ## Dependencies & Requirements
 
 * CMake 3.25
-* g++-11! [Installation](https://stackoverflow.com/questions/67298443/when-gcc-11-will-appear-in-ubuntu-repositories)
+* g++-14! [Installation](https://askubuntu.com/questions/1513160/how-to-install-gcc-14-on-ubuntu-22-04-and-24-04#1518433)
 * Ninja (Optional)
 
 * String formatting tool: [fmt](https://github.com/fmtlib/fmt)
