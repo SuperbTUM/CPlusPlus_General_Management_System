@@ -99,6 +99,11 @@ make
 sudo make install
 ```
 
+Or
+```bash
+sudo snap install valgrind --classic
+```
+
 For memcheck
 ```bash
 cd bin/
