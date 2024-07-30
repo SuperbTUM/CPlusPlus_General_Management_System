@@ -78,12 +78,15 @@ class database_factory {
         virtual ~database_factory() {}
 };
 
+auto close_db = [](sqlite3* db) { sqlite3_close(db); };
+
 class database{
     protected:
-        sqlite3 *db;
+        std::unique_ptr<sqlite3, decltype(close_db)> up;
         sqlite3_stmt *stmt;
         sqlite3_stmt *stmt_insert;
         char *zErrMsg;
+        sqlite3 *db;
     public:
         virtual void create(bool, const char*) = 0;
         virtual int count() = 0;

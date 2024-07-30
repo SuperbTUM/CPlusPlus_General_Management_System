@@ -51,9 +51,6 @@ struct UserInfo final {
 
 class db_user: public database{
     private:
-        // sqlite3 *db;
-        // sqlite3_stmt *stmt;
-        // char *zErrMsg;
         int rc;
         string sql;
         string checkType(string target_attribute);
