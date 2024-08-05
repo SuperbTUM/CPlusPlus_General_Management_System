@@ -3,10 +3,11 @@
 #include "question_bank.cpp"
 #include <omp.h>
 #include <utility>
+#include <span>
 using namespace std;
 
 vector<string>& helper(vector<string>& msg, string&& keyword) {
-    auto formatting = [&](string a) -> string{return (keyword == "code" || keyword == "counts")? fmt::format("{{\"{}\":{}}}", keyword, a): fmt::format("{{\"{}\":\"{}\"}}", keyword, a);};
+    auto formatting = [&](string a) constexpr -> string{return (keyword == "code" || keyword == "counts")? fmt::format("{{\"{}\":{}}}", keyword, a): fmt::format("{{\"{}\":\"{}\"}}", keyword, a);};
     std::transform(msg.begin(), msg.end(), msg.begin(), formatting);
     return msg;
 }
@@ -260,7 +261,7 @@ void Server::handleNewConnection()
 }
 
 
-void Server::sendMsgToExisting(Connector& connect_fd, vector<string> messages){
+void Server::sendMsgToExisting(Connector& connect_fd, span<const string> messages){
     if(messages.empty()) {
         // resend
         if(archived_msg.find(connect_fd.getFd()) != archived_msg.end() && !archived_msg[connect_fd.getFd()].empty()) {
