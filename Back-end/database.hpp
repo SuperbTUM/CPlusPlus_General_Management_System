@@ -36,11 +36,16 @@ inline string custom_to_string(variant<string, int, double> const& value) {
     return std::get<string>(value);
 }
 
-string concat(pair<string, variant<string, int, double>> s) {return s.first + "=" + custom_to_string(s.second);}
+inline string concat(pair<string, variant<string, int, double>> s) {
+    if (std::holds_alternative<string>(s.second)) {
+        return s.first + "='" + std::get<string>(s.second) + "'";
+    }
+    return s.first + "=" + custom_to_string(s.second);
+}
 
 template <typename...Args>
 string concat(pair<string, string> s, Args const& ...params) {
-    return s.first + "=" + s.second + " AND " + concat(params...);
+    return s.first + "='" + s.second + "' AND " + concat(params...);
 }
 
 template <typename...Args>
@@ -50,11 +55,11 @@ string concat(string const& base, Args const& ...params) {
     else return base + " WHERE " + concat(params...);
 }
 
-string concat(string const& base) {return base;}
+inline string concat(string const& base) {return base;}
 
-string concat() {return {};}
+inline string concat() {return {};}
 
-string concat(string const& base, pair<string, variant<string, int, double>> s) {
+inline string concat(string const& base, pair<string, variant<string, int, double>> s) {
     return base + " AND " + concat(s);
 }
 
@@ -78,23 +83,24 @@ class database_factory {
         virtual ~database_factory() {}
 };
 
-auto close_db = [](sqlite3* db) { sqlite3_close(db); };
+inline auto close_db = [](sqlite3* db) { if(db) sqlite3_close(db); };
 
 class database{
     protected:
-        std::unique_ptr<sqlite3, decltype(close_db)> up;
-        sqlite3_stmt *stmt;
-        sqlite3_stmt *stmt_insert;
-        char *zErrMsg;
-        sqlite3 *db;
+        std::unique_ptr<sqlite3, decltype(close_db)> up{nullptr, close_db};
+        sqlite3_stmt *stmt{nullptr};
+        sqlite3_stmt *stmt_insert{nullptr};
+        char *zErrMsg{nullptr};
+        sqlite3 *db{nullptr};
     public:
+        virtual ~database() = default;
         virtual void create(bool, const char*) = 0;
         virtual int count() = 0;
         virtual void clean() = 0;
         virtual void close(){
-            sqlite3_finalize(stmt); // Is this necessary?
-            sqlite3_finalize(stmt_insert); // Is this necessary?
-            sqlite3_close(db);
+            if(stmt) { sqlite3_finalize(stmt); stmt = nullptr; }
+            if(stmt_insert) { sqlite3_finalize(stmt_insert); stmt_insert = nullptr; }
+            if(db) { sqlite3_close(db); db = nullptr; }
         }
         virtual void reorganize() = 0;
         template<typename T>
@@ -120,11 +126,10 @@ class database{
         template<hashable T = string>
         vector<T> sqlexec(const string& sql) {
             sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
-            sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", 0, 0, 0);
             int num_cols;
             vector<T> output;
             output.reserve(20);
-            while(sqlite3_step(stmt) != SQLITE_DONE){
+            while(sqlite3_step(stmt) == SQLITE_ROW){
                 vector<T> row;
                 num_cols = sqlite3_column_count(stmt);
                 for(int i = 0; i < num_cols; i++){

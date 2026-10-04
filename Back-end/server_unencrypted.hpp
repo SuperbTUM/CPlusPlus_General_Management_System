@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <iterator>
 #include <regex>
+#include <span>
 // #include <nlohmann/json.hpp>
 // using json = nlohmann::json;
 #include "glaze/glaze.hpp"
@@ -98,7 +99,7 @@ class InterruptException : public std::exception
   };
 
 /// method to throw exception at signal interrupt
-void sig_to_exception(int s)
+inline void sig_to_exception(int s)
 {
     throw InterruptException(s);
 }
@@ -107,12 +108,12 @@ void sig_to_exception(int s)
 
 struct Connector {
     private:
-        uint16_t source_fd;
+        int source_fd{-1};
     public:
-        Connector() {source_fd = 0;}
-        Connector(uint16_t fd): source_fd(fd) {};
-        void setFd(uint16_t fd_) {source_fd = fd_;}
-        uint16_t getFd() const {return source_fd;}
+        Connector() {source_fd = -1;}
+        Connector(int fd): source_fd(fd) {};
+        void setFd(int fd_) {source_fd = fd_;}
+        int getFd() const {return source_fd;}
         ~Connector() = default;
 };
 
@@ -143,9 +144,9 @@ public:
     void onInput(void (*rc)(uint16_t fd, char *buffer));
     void onDisconnect(void (*dc)(uint16_t fd));
 
-    uint16_t sendMessage(Connector conn, const char *messageBuffer);
-    uint16_t sendMessage(Connector conn, char *messageBuffer);
-    uint16_t recvMessage(Connector conn, char *messageBuffer);
+    int sendMessage(Connector conn, const char *messageBuffer);
+    int sendMessage(Connector conn, char *messageBuffer);
+    int recvMessage(Connector conn, char *messageBuffer);
 
 private:
 
@@ -203,7 +204,7 @@ private:
     void handleNewConnection();
 
     tuple<vector<string>, Connector> recvInputFromExisting(shared_ptr<db_user>, shared_ptr<question_bank>, Connector&);
-    void sendMsgToExisting(Connector&, vector<string> = vector<string>());
+    void sendMsgToExisting(Connector&, span<const string> = span<const string>());
     vector<string> registerUser(shared_ptr<db_user>, Connector& connect_fd, string& username, auto password, string& identity);
     vector<string> authenticateUser(shared_ptr<db_user>, Connector& conn, string& username, auto password);
     vector<string> logout(shared_ptr<db_user>, Connector&);

@@ -27,11 +27,11 @@ Server::Server(string digital_certificate_path, string privateKey_path)
 
 Server::Server(string digital_certificate_path, string privateKey_path, int port)
 {
-    users.reserve(max_concurrency);
+    users.resize(max_concurrency);
     std::for_each(users.begin(), users.end(), [](std::shared_ptr<db_user> &ptr)
         {ptr = std::make_shared<db_user>();}
     );
-    questions.reserve(max_concurrency);
+    questions.resize(max_concurrency);
     std::for_each(questions.begin(), questions.end(), [](std::shared_ptr<question_bank> &ptr)
         {ptr = std::make_shared<question_bank>();}
     );
@@ -90,7 +90,9 @@ void Server::setup(int port, string digital_certificate_path, string privateKey_
     }
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
     // Load certificate
-    if(SSL_CTX_load_verify_locations(ctx, strcat(getenv("HOME"), "/ssl_server_client/ca/ca.crt"), NULL)<=0){
+    const char* home_env = getenv("HOME");
+    string ca_path = (home_env ? home_env : ".") + string("/ssl_server_client/ca/ca.crt");
+    if(SSL_CTX_load_verify_locations(ctx, ca_path.c_str(), NULL)<=0){
         ERR_print_errors_fp(stdout);
         exit(1);
     }
@@ -191,97 +193,98 @@ void Server::handleNewConnection()
     	
 	if (tempsocket_fd < 0) {
         perror("[SERVER] [ERROR] accept() failed");
-	} else {
-        // FD_SET(tempsocket_fd, &masterfds);
-        epev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-        epev.data.fd = tempsocket_fd;
-        int flags = fcntl(tempsocket_fd, F_GETFL, 0);
-        if(flags < 0 || fcntl(tempsocket_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            // cout<<"Set non-blocking error, fd: "<<tempsocket_fd<<endl;
-            fmt::print("Set non-blocking error, fd: {}\n", tempsocket_fd);
-            return;
-        } 
+        return;
+	}
 
-        epoll_ctl(eFd, EPOLL_CTL_ADD, tempsocket_fd, &epev);
-    }
-    // // newConnectionCallback(tempsocket_fd); //call the callback
-    // string message = "Successfully connected!";
-    // struct Connector connect_fd = Connector();
-    // connect_fd.source_fd = tempsocket_fd;
-    // sendMessage(connect_fd, message.c_str());
     SSL* ssl = SSL_new(ctx);
+    if(!ssl) {
+        close(tempsocket_fd);
+        return;
+    }
     SSL_set_fd(ssl, tempsocket_fd);
     SSL_set_accept_state(ssl);
-    // disable two-way shutdown
+
     if (1 != SSL_set_num_tickets(ssl, 0)) {
         fprintf(stderr, "SSL_set_num_tickets failed\n");
-        exit(EXIT_FAILURE);
     }
-    // set retry mechanism
-    int retry = 10;
+
+    // Perform SSL handshake with timeout using poll
+    struct pollfd pfd;
+    pfd.fd = tempsocket_fd;
     int accept_status;
-    while (retry > 0 && (accept_status = SSL_do_handshake(ssl)) < 0) {
-        retry --;
-    }
-    if(retry <= 0) {
-        perror("accept"); // epoll not fit for non-blocking connection
+    while ((accept_status = SSL_do_handshake(ssl)) <= 0) {
         int accept_err = SSL_get_error(ssl, accept_status);
-        int old_ev = epev.events;
-        if (accept_err == SSL_ERROR_WANT_WRITE) {
-            epev.events |= EPOLLOUT;
-            epev.events &= ~EPOLLIN;
-            if(old_ev == epev.events) {
-                SSL_shutdown(ssl);
-                SSL_free(ssl);
-                close(tempsocket_fd);
-                return;
-            }
-        } else if (accept_err == SSL_ERROR_WANT_READ) {
-            epev.events |= EPOLLIN;
-            epev.events &= ~EPOLLOUT;
-            if(old_ev == epev.events) {
-                SSL_shutdown(ssl);
-                SSL_free(ssl);
-                close(tempsocket_fd);
-                return;
-            }
+        if (accept_err == SSL_ERROR_WANT_READ) {
+            pfd.events = POLLIN;
+        } else if (accept_err == SSL_ERROR_WANT_WRITE) {
+            pfd.events = POLLOUT;
         } else {
+            perror("[SERVER] [ERROR] SSL handshake failed");
             SSL_shutdown(ssl);
             SSL_free(ssl);
             close(tempsocket_fd);
             return;
         }
-
+        int p_ret = poll(&pfd, 1, 5000); // 5s timeout
+        if (p_ret <= 0) {
+            fprintf(stderr, "[SERVER] SSL handshake timed out or error\n");
+            SSL_shutdown(ssl);
+            SSL_free(ssl);
+            close(tempsocket_fd);
+            return;
+        }
     }
+
+    // Set non-blocking on client socket after handshake
+    int flags = fcntl(tempsocket_fd, F_GETFL, 0);
+    if(flags < 0 || fcntl(tempsocket_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        fmt::print("Set non-blocking error, fd: {}\n", tempsocket_fd);
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(tempsocket_fd);
+        return;
+    }
+
+    // Register with epoll using level-triggered EPOLLIN
+    epoll_event ev{};
+    ev.events = EPOLLIN;
+    ev.data.fd = tempsocket_fd;
+    if(epoll_ctl(eFd, EPOLL_CTL_ADD, tempsocket_fd, &ev) < 0) {
+        perror("[SERVER] epoll_ctl add failed");
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(tempsocket_fd);
+        return;
+    }
+
     ssl_map[tempsocket_fd] = ssl;
-    // cout<<"Successfully connected!"<<endl;
-    fmt::print("Successfully connected!\n");
-    Connector connect_fd = Connector(tempsocket_fd);
-    // sendMsgToExisting(connect_fd); // It is advised to send once connected
+    fmt::print("Successfully connected, fd: {}\n", tempsocket_fd);
 }
 
 
 void Server::sendMsgToExisting(Connector& connect_fd, span<const string> messages){
+    vector<string> resend_buffer;
     if(messages.empty()) {
         // resend
-        if(archived_msg.find(connect_fd.getFd()) != archived_msg.end() && !archived_msg[connect_fd.getFd()].empty()) {
-            messages = archived_msg[connect_fd.getFd()];
-            archived_msg.erase(connect_fd.getFd());
+        auto it = archived_msg.find(connect_fd.getFd());
+        if(it != archived_msg.end() && !it->second.empty()) {
+            resend_buffer = std::move(it->second);
+            archived_msg.erase(it);
+            messages = resend_buffer;
         }
     } 
-    for(int i=0; i<messages.size(); i++){
+    for(size_t i = 0; i < messages.size(); i++){
         int bytes = sendMessage(connect_fd, messages[i].c_str());
         int retry = 5;
-        while(bytes < 0 && retry-- >= 0){
+        while(bytes < 0 && retry-- > 0){
             bytes = sendMessage(connect_fd, messages[i].c_str());
         }
         // If still failed to send, archive the msg and send again afterwards
         if(bytes < 0) {
             archived_msg[connect_fd.getFd()].emplace_back(messages[i]);
-            // cout<<"Message sent incomplete!"<<endl;
-            fmt::print("Message sent incomplete!");
+            fmt::print("Message sent incomplete!\n");
         }
-        usleep(100000);
+        usleep(1000);
     }
 }
 
@@ -289,20 +292,31 @@ void Server::sendMsgToExisting(Connector& connect_fd, span<const string> message
 tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<db_user> cur_user, std::shared_ptr<question_bank> cur_question, Connector& connect_fd)
 {
     vector<string> messages;
+    char input_buffer[INPUT_BUFFER_SIZE]{0};
     int nbytesrecv = recvMessage(connect_fd, input_buffer);
     // int nbytesrecv = recv(fd, input_buffer, INPUT_BUFFER_SIZE, 0);
     // cout<<"Received bytes: "<<nbytesrecv<<endl;
     fmt::print("Received bytes: {}\n", nbytesrecv);
     if (nbytesrecv <= 0)
     {
-        //problem
+        int fd = connect_fd.getFd();
         if (nbytesrecv < 0)
-	    {   
+        {   
+            if (ssl_map.find(fd) != ssl_map.end()) {
+                int err = SSL_get_error(ssl_map[fd], nbytesrecv);
+                if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+                    return make_tuple<vector<string>, Connector>(std::move(messages), std::move(connect_fd));
+                }
+            }
             perror("[SERVER] [ERROR] recv() failed");
-        	//disconnectCallback((uint16_t)fd);
         }
-        close(connect_fd.getFd()); //close connection to client
-        // FD_CLR(connect_fd.source_fd, &masterfds); //clear the client fd from fd set
+        epoll_ctl(eFd, EPOLL_CTL_DEL, fd, nullptr);
+        if (ssl_map.find(fd) != ssl_map.end()) {
+            SSL_shutdown(ssl_map[fd]);
+            SSL_free(ssl_map[fd]);
+            ssl_map.erase(fd);
+        }
+        close(fd);
         return make_tuple<vector<string>, Connector>(std::move(messages), std::move(connect_fd));
     }
     #ifdef SERVER_DEBUG
@@ -311,6 +325,7 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     // receiveCallback(fd,input_buffer);
     // authenticate the identity of the user
     // json recv_message = json::parse(input_buffer);
+    s1 recv_struct{};
     glz::read<glz::opts{.error_on_unknown_keys = false}>(recv_struct, input_buffer);
     
     // parse information
@@ -526,7 +541,11 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
 }
 
 int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
-    int source_fd = logined_users[username];
+    auto it = logined_users.find(username);
+    if(it == logined_users.end()){
+        return -1;
+    }
+    int source_fd = it->second;
     vector<pair<string, variant<string, int, double>>> constraint;
     constraint.emplace_back("activity", 0);
     int res = cur_user->update(std::as_const(username), constraint);
@@ -534,10 +553,7 @@ int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
         // cout<<"logout failed."<<endl;
         fmt::print("logout failed.\n");
     } else {
-        auto it = logined_users.find(username);
-        if(it != logined_users.end()){
-            logined_users.erase(it);
-        }
+        logined_users.erase(it);
     }
     // cout<<"Logout from other device successfully!"<<endl;
     fmt::print("Logout from other device successfully!\n");
@@ -565,8 +581,7 @@ vector<string> Server::getUser(std::shared_ptr<db_user> cur_user, Connector& con
     string message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, numUsers);
     #endif
 
-    // messages.reserve(numUsers+1);
-    messages.resize(numUsers+1);
+    messages.reserve(numUsers+1);
 
     messages.emplace_back(std::forward<string>(message));
     if(numUsers < 0) return messages;
@@ -676,8 +691,7 @@ vector<string> Server::getTeachers(std::shared_ptr<db_user> cur_user){
     string message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, teachers.size());
     #endif
 
-    messages.resize(teachers.size()+1);
-    // messages.reserve(teachers.size()+1);
+    messages.reserve(teachers.size()+1);
 
     messages.emplace_back(std::forward<string>(message));
 
@@ -722,8 +736,7 @@ vector<string> Server::getSubjects(shared_ptr<question_bank> cur_question){
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, subjects.size());
     #endif
 
-    messages.resize(subjects.size()+1);
-    // messages.reserve(subjects.size()+1);
+    messages.reserve(subjects.size()+1);
     messages.emplace_back(std::forward<string>(message));
 
     // experimental
@@ -762,8 +775,7 @@ vector<string> Server::getChapters(shared_ptr<question_bank> cur_question, strin
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, chapter_num);
     #endif
 
-    messages.resize(chapter_num+1);
-    // messages.reserve(chapter_num+1);
+    messages.reserve(chapter_num+1);
 
     messages.emplace_back(std::forward<string>(message));
 
@@ -903,8 +915,7 @@ vector<string> Server::getQuestions(shared_ptr<question_bank> cur_question, stri
     message = fmt::format("{{\"code\": {}, \"counts\": {}}}", status_code, question_ids.size());
     #endif
 
-    messages.resize(question_ids.size()+1);
-    // messages.reserve(question_ids.size()+1);
+    messages.reserve(question_ids.size()+1);
 
     messages.emplace_back(std::forward<string>(message));
 
@@ -1015,6 +1026,15 @@ void Server::loop()
         return;
     }
 
+    // Handle new incoming connections on master socket first sequentially
+    for (int i = 0; i < eNum; i++) {
+        if(events[i].data.fd == mastersocket_fd) {
+            if(events[i].events & EPOLLIN) {
+                handleNewConnection();
+            }
+        }
+    }
+
     int num_threads = min(max_concurrency, eNum);
 
     //loop the fd_set and check which socket has interactions available
@@ -1022,56 +1042,44 @@ void Server::loop()
     vector<Connector> target_connectors(eNum, Connector(-1));
     vector<vector<string>> messages_list(eNum, vector<string>());
     #pragma omp parallel for schedule(auto) num_threads(num_threads) 
-    for (int i = 0; i <= eNum; i++) {
-        //if (FD_ISSET(i, &tempfds)) { //if the socket has activity pending
+    for (int i = 0; i < eNum; i++) {
         if(events[i].data.fd == mastersocket_fd) {
-            //if (mastersocket_fd == i) {
-            if(events[i].events & EPOLLIN) {
-                //new connection on master socket
-                handleNewConnection();
+            continue;
+        }
+
+        // check if there is a potential disconnection
+        if(events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
+            int fd = events[i].data.fd;
+            epoll_ctl(eFd, EPOLL_CTL_DEL, fd, nullptr);
+            if (ssl_map.find(fd) != ssl_map.end()) {
+                SSL_shutdown(ssl_map[fd]);
+                SSL_free(ssl_map[fd]);
+                ssl_map.erase(fd);
+            }
+            close(fd);
+            fmt::print("Connection {} has been closed.\n", static_cast<int>(fd));
+        } else if (events[i].events & EPOLLIN) {
+            //existing connection has new data
+            int thread_idx = omp_get_thread_num();
+            Connector connect_fd = Connector(events[i].data.fd);
+            auto [messages, target_connector] = recvInputFromExisting(users[thread_idx], questions[thread_idx], connect_fd);
+            if(!messages.empty()){
+                messages.shrink_to_fit();
+                bool user_safe = users[thread_idx]->check_threadsafe();
+                bool question_safe = questions[thread_idx]->check_threadsafe();
+                if(!user_safe || !question_safe) fmt::print("Warning: database not thread-safe!\n");
+                target_connectors[i] = target_connector;
+                messages_list[i] = messages;
             }
         }
-        else {
-            // check if there is a potential disconnection
-            if(events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
-                epoll_ctl(eFd, EPOLL_CTL_DEL, events[i].data.fd, nullptr);
-                close(events[i].data.fd);
-                // cout<<"Connection "<<events[i].data.fd<<" has been closed."<<endl;
-                fmt::print("Connection {} has been closed.\n", static_cast<int>(events[i].data.fd));
-            } else if (events[i].events & EPOLLIN) {
-                //exisiting connection has new data
-                int thread_idx = omp_get_thread_num();
-                // experimental
-                //if((childpid = fork()) == 0) {
-                Connector connect_fd = Connector(events[i].data.fd);
-                // connect_fd.source_fd = i;
-                auto [messages, target_connector] = recvInputFromExisting(users[thread_idx], questions[thread_idx], connect_fd);
-                if(!messages.empty()){
-                    messages.shrink_to_fit();
-                    bool user_safe = users[thread_idx]->check_threadsafe();
-                    bool question_safe = questions[thread_idx]->check_threadsafe();
-                    if(!user_safe || !question_safe) fmt::print("Warning: database not thread-safe!\n");//cout<<"Warning: database not thread-safe!"<<endl;
-                    //sendMsgToExisting(target_connector, messages);
-                    //bzero(&input_buffer,INPUT_BUFFER_SIZE); //clear input buffer
-                    target_connectors[i] = target_connector;
-                    messages_list[i] = messages;
-                }
-                //}
-
-                
-            }
-                
-        } //loop on to see if there is more
     }
-    // Sequentially send to the server
-    for(int i = 0; i <= eNum; i++) {
+    // Sequentially send to the clients
+    for(int i = 0; i < eNum; i++) {
         Connector cur_connector = target_connectors[i];
         vector<string> cur_messages = messages_list[i];
         if (cur_connector.getFd() != -1) {
             sendMsgToExisting(cur_connector, cur_messages);
-            bzero(&input_buffer, INPUT_BUFFER_SIZE);
         }
-        
     }
 }
 
@@ -1101,16 +1109,39 @@ void Server::onDisconnect(void(*dc)(uint16_t))
     disconnectCallback = dc;
 }
 
-uint16_t Server::sendMessage(Connector conn, char *messageBuffer) {
-    return SSL_write(ssl_map[conn.getFd()], messageBuffer, strlen(messageBuffer));
+int Server::sendMessage(Connector conn, char *messageBuffer) {
+    return sendMessage(conn, static_cast<const char*>(messageBuffer));
 }
 
-uint16_t Server::sendMessage(Connector conn, const char *messageBuffer) {
-    return SSL_write(ssl_map[conn.getFd()], messageBuffer, strlen(messageBuffer));
+int Server::sendMessage(Connector conn, const char *messageBuffer) {
+    int fd = conn.getFd();
+    if (ssl_map.find(fd) == ssl_map.end() || !ssl_map[fd]) return -1;
+    SSL* ssl = ssl_map[fd];
+    int len = static_cast<int>(strlen(messageBuffer));
+    int total_sent = 0;
+    while (total_sent < len) {
+        int sent = SSL_write(ssl, messageBuffer + total_sent, len - total_sent);
+        if (sent <= 0) {
+            int err = SSL_get_error(ssl, sent);
+            if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
+                usleep(1000);
+                continue;
+            }
+            return -1;
+        }
+        total_sent += sent;
+    }
+    return total_sent;
 }
 
-uint16_t Server::recvMessage(Connector conn, char *messageBuffer){
-    return SSL_read(ssl_map[conn.getFd()], messageBuffer, INPUT_BUFFER_SIZE);
+int Server::recvMessage(Connector conn, char *messageBuffer){
+    int fd = conn.getFd();
+    if (ssl_map.find(fd) == ssl_map.end() || !ssl_map[fd]) return -1;
+    int ret = SSL_read(ssl_map[fd], messageBuffer, INPUT_BUFFER_SIZE - 1);
+    if (ret > 0) {
+        messageBuffer[ret] = '\0';
+    }
+    return ret;
 }
 
 shared_ptr<Server> Server::server_ = nullptr;
@@ -1138,6 +1169,10 @@ shared_ptr<Server> Server::getInstance(string ca_certificate, string private_key
 
 
 int main(int argc, char* argv[]){
+    if (argc < 3) {
+        fmt::print("Usage: {} <ca_certificate> <private_key>\n", argv[0]);
+        return 1;
+    }
     // activate signal handling
     struct sigaction sigIntHandler;
     sigIntHandler.sa_handler = sig_to_exception;

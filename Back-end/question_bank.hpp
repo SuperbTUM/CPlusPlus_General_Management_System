@@ -18,7 +18,7 @@ struct QuestionInfo final {
             QuestionInfo() {}
             QuestionInfo(string path_, string content_, string chapter_, T category_): path(path_), content(content_), chapter(chapter_), category(category_), rubric(0) {};
             QuestionInfo(string path_, string content_, string chapter_, T category_, int rubric_): path(path_), content(content_), chapter(chapter_), category(category_), rubric(rubric_) {};
-            QuestionInfo(const QuestionInfo<T>& newquestion): path(newquestion->path), content(newquestion->content), chapter(newquestion->chapter), category(newquestion->category), rubric(newquestion->rubric) {};
+            QuestionInfo(const QuestionInfo<T>& newquestion): path(newquestion.path), content(newquestion.content), chapter(newquestion.chapter), category(newquestion.category), rubric(newquestion.rubric) {};
             std::tuple<string, string, string, T, int> getElements() const {return std::make_tuple(path, content, chapter, category, rubric);};
         };
 
@@ -112,7 +112,7 @@ class question_bank: public database{
         int delet(vector<pair<string, string>>);
         void clean();
         void reorganize() {
-            sql = "DELETE FROM QUESTIONS IF EXISTS;";
+            sql = "DELETE FROM QUESTIONS;";
             rc = sqlite3_exec(db, sql.c_str(), c_callback<question_bank>, 0, &zErrMsg);
             if (rc != SQLITE_OK) {
                 fprintf(stderr, "SQL error: %s\n", zErrMsg);

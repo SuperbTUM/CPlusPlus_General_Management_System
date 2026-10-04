@@ -15,7 +15,6 @@
 // #include <nlohmann/json.hpp>
 // using json = nlohmann::json;
 #include "glaze/glaze.hpp"
-#include "glaze/core/macros.hpp"
 using namespace std;
 
 #if __has_include(<format>)
@@ -77,19 +76,22 @@ class Client{
             string status {};
         };
         struct Connector{
-            uint16_t source_fd;
+            int source_fd{-1};
+            int getFd() const { return source_fd; }
+            void setFd(int fd) { source_fd = fd; }
         };
         Client();
         Client(int);
-        Client(const Client& orig);
+        Client(const Client&) = delete;
+        Client& operator=(const Client&) = delete;
         virtual ~Client();
         void setup(int port);
         void loop();
         void initConnect(hostent *server);
 
-        uint16_t sendMessage(Connector conn, const char *messageBuffer);
-        uint16_t sendMessage(Connector conn, char *messageBuffer);
-        uint16_t recvMessage(Connector conn, char *messageBuffer);
+        int sendMessage(Connector conn, const char *messageBuffer);
+        int sendMessage(Connector conn, char *messageBuffer);
+        int recvMessage(Connector conn, char *messageBuffer);
 
         // uint16_t sendMessageSSL(SSL *ssl, char *messageBuffer);
         // uint16_t sendMessageSSL(SSL *ssl, const char *messageBuffer);

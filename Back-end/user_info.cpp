@@ -13,9 +13,10 @@ db_user::db_user(const db_user& database){
 }
 
 db_user::~db_user(){
-   sqlite3_finalize(stmt); // Is this necessary?
-   sqlite3_finalize(stmt_insert);
-   sqlite3_close(db);
+   if(stmt) { sqlite3_finalize(stmt); stmt = nullptr; }
+   if(stmt_insert) { sqlite3_finalize(stmt_insert); stmt_insert = nullptr; }
+   if(db) { sqlite3_close(db); db = nullptr; }
+   up.release();
 }
 
 void db_user::create(bool clear/*= false*/, const char* database_name/*= "userinfo.db"*/){
@@ -25,15 +26,15 @@ void db_user::create(bool clear/*= false*/, const char* database_name/*= "userin
                         NULL);
    
    if(rc != SQLITE_OK) {
-      fprintf(stderr, "No such database, creating a new one: %s\n", sqlite3_errmsg(db));
+      fprintf(stderr, "No such database, creating a new one: %s\n", database_name);
       rc = sqlite3_open_v2(database_name, std::out_ptr(up), SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, 
                      NULL); // open in multi-threading mode
 
    } else {
-      db = up.get();
       if(clear) clean();
       fprintf(stdout, "Opened database successfully\n");
    }
+   db = up.get();
    /* Create SQL statement */
    // experimental
    rc = sqlite3_exec(db, "pragma journal_mode = WAL", NULL, 0, &zErrMsg);
@@ -152,12 +153,11 @@ int db_user::update(const string& primary_val, vector<pair<string, variant<strin
 string db_user::checkType(string target_attribute){
    sql = fmt::format("SELECT typeof({}) FROM USER LIMIT 1;", target_attribute);
    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", 0, 0, &zErrMsg);
    int num_cols;
    int bytes;
    char* row_content_raw;
    string res;
-   while(sqlite3_step(stmt) != SQLITE_DONE){
+   while(sqlite3_step(stmt) == SQLITE_ROW){
          num_cols = sqlite3_column_count(stmt);
          for(int i = 0; i < num_cols; i++){
             row_content_raw = const_cast<char*>(static_cast<const char *>(sqlite3_column_blob(stmt, i)));
@@ -173,32 +173,23 @@ string db_user::checkType(string target_attribute){
 template<typename...Args>
 string db_user::getUserAttribute(string& primary_val, string& target_attribute, Args const& ...constraints)
 {
-   // if(constraint){
-   //       auto constraint_val = constraint.value();
-   //       string key = constraint_val.first;
-   //       auto value = constraint_val.second;
-   //       sql = fmt::format("SELECT {} FROM USER "  \
-   //                   "WHERE USERNAME = '{}' AND {} = '{}' LIMIT 1; ", target_attribute, primary_val, key, custom_to_string(value));
-   // }
-   // else sql = fmt::format("SELECT {} FROM USER " \
-   //                   "WHERE USERNAME = '{}' LIMIT 1; ", target_attribute, primary_val);
    const string base = fmt::format("SELECT {} FROM USER WHERE USERNAME = '{}' " , target_attribute, primary_val);
    sql = concat(base, constraints...) + " LIMIT 1;";
 
    // rc = sqlite3_exec(db, sql, callback, 0, &zErrMsg);
    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", 0, 0, &zErrMsg);
    int num_cols;
    int bytes = 0;
-   char* row_content_raw;
    string res;
    
-   while(sqlite3_step(stmt) != SQLITE_DONE){
+   while(sqlite3_step(stmt) == SQLITE_ROW){
          num_cols = sqlite3_column_count(stmt);
          for(int i = 0; i < num_cols; i++){
-            row_content_raw = const_cast<char*>(static_cast<const char *>(sqlite3_column_blob(stmt, i)));
-            bytes = sqlite3_column_bytes(stmt, i);
-            res = string(row_content_raw, bytes);
+            const char* txt = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
+            if(txt) {
+               bytes = sqlite3_column_bytes(stmt, i);
+               res = string(txt, bytes);
+            }
          }
    }
    sqlite3_finalize(stmt);
@@ -245,10 +236,9 @@ string db_user::getUserAttribute(string& primary_val, string& target_attribute, 
 int db_user::count(){
    sql = "SELECT COUNT (*) from USER LIMIT 1;"; 
    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", 0, 0, &zErrMsg);
    int num_cols;
    vector<int> output;
-   while(sqlite3_step(stmt) != SQLITE_DONE){
+   while(sqlite3_step(stmt) == SQLITE_ROW){
       vector<int> row;
       num_cols = sqlite3_column_count(stmt);
       for(int i = 0; i < num_cols; i++){
@@ -267,10 +257,9 @@ int db_user::countDistinct(const string& target_attribute, pair<string, variant<
    auto countValue =  count_info.second;
    sql = fmt::format("SELECT COUNT(DISTINCT {}) from USER WHERE {}='{}' LIMIT 1;", target_attribute, countKey, custom_to_string(countValue));
    sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", 0, 0, &zErrMsg);
    int num_cols;
    vector<int> output;
-   while(sqlite3_step(stmt) != SQLITE_DONE){
+   while(sqlite3_step(stmt) == SQLITE_ROW){
       vector<int> row;
       num_cols = sqlite3_column_count(stmt);
       for(int i = 0; i < num_cols; i++){

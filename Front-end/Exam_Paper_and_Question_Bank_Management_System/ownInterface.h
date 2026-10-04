@@ -27,6 +27,7 @@ class Login{// login panel
 protected:
     virtual void submit_login(QString userName,QString password)=0;// submit login request
 public:
+    virtual ~Login() = default;
     virtual void open_login_panel()=0;// open login panel
 };
 
@@ -36,6 +37,7 @@ protected:
     virtual void delete_user(QString userName)=0; // delete users in the system
     virtual void register_user(QString userName,QString password)=0; // create a new user in the system
 public:
+    virtual ~Admin() = default;
     virtual void open_admin_panel()=0;// do something before opening an admin panel
     virtual void close_admin_panel()=0;// slot for closing admin panel
 };
@@ -49,6 +51,7 @@ protected:
     virtual void get_bulletins()=0;// read the names of the bulletins and show them
     virtual void get_teachers()=0;
 public:
+    virtual ~RuleMaker() = default;
     virtual void open_rulemaker_panel()=0;// open the rulemaker panel
     virtual void close_rulemaker_panel()=0;// close the rulemaker panel
 };
@@ -67,6 +70,7 @@ protected:
     virtual void read_question(QString subject,QString chapter,QString timeStamp)=0;// load the question text to the editor
     virtual void write_question(QString subject,QString chapter,QString timeStamp,QString questionText)=0;// submit question text after editing
 public:
+    virtual ~QuestionManagement() = default;
     virtual void open_question_management_panel()=0;// open the window
     virtual void close_question_management_panel()=0;// close the window
 };
@@ -78,6 +82,7 @@ protected:
     virtual void output_paper(QString pathName,QStringList questionsList)=0;// output paper
     virtual void read_questions(QStringList questionsList)=0;// read all questions and display
 public:
+    virtual ~PaperProduction() = default;
     virtual void add_question(QString subject,QString chapter,QString timeStamp)=0;// add question into the paper
     virtual void open_paper_production_panel()=0;
     virtual void close_paper_production_panel()=0;

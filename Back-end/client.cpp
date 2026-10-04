@@ -45,13 +45,6 @@ Client::Client(char* digital_certificate_path, char* privateKey_path, int port){
     setup(port, digital_certificate_path, privateKey_path);
 }
 
-Client::Client(const Client& orig){
-    socket_fd = orig.socket_fd;
-    num_bytes = orig.num_bytes;
-    char buffer[256];
-    strcpy(buffer, orig.buffer);
-}
-
 void Client::setup(const int port, const char* digital_certificate_path, const char* privateKey_path){
     SSL_library_init();
     OpenSSL_add_all_algorithms();
@@ -64,7 +57,9 @@ void Client::setup(const int port, const char* digital_certificate_path, const c
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 
     // root certificate location needs to be modified accordingly
-    if (SSL_CTX_load_verify_locations(ctx, strcat(getenv("HOME"), "/ssl_server_client/ca/ca.crt"), NULL)<=0){
+    const char* home_env = getenv("HOME");
+    string ca_path = (home_env ? home_env : ".") + string("/ssl_server_client/ca/ca.crt");
+    if (SSL_CTX_load_verify_locations(ctx, ca_path.c_str(), NULL)<=0){
         ERR_print_errors_fp(stdout);
         exit(1);
     }
@@ -91,27 +86,27 @@ void Client::setup(const int port, const char* digital_certificate_path, const c
     serv_addr.sin_family = AF_INET;
 }
 
-uint16_t Client::sendMessage(Connector conn, const char *messageBuffer){
+int Client::sendMessage(Connector conn, const char *messageBuffer){
     return send(conn.source_fd, messageBuffer, strlen(messageBuffer), 0);
 }
 
-uint16_t Client::sendMessageSSL(SSL *ssl, char *messageBuffer){
+int Client::sendMessageSSL(SSL *ssl, char *messageBuffer){
     return SSL_write(ssl, messageBuffer, strlen(messageBuffer));
 }
 
-uint16_t Client::sendMessage(Connector conn, char *messageBuffer){
+int Client::sendMessage(Connector conn, char *messageBuffer){
     return send(conn.source_fd, messageBuffer, strlen(messageBuffer), 0);
 }
 
-uint16_t Client::sendMessageSSL(SSL *ssl, const char *messageBuffer){
+int Client::sendMessageSSL(SSL *ssl, const char *messageBuffer){
     return SSL_write(ssl, messageBuffer, strlen(messageBuffer));
 }
 
-uint16_t Client::recvMessage(Connector conn, char *messageBuffer){
+int Client::recvMessage(Connector conn, char *messageBuffer){
     return recv(conn.source_fd, messageBuffer, INPUT_BUFFER_SIZE, 0);
 }
 
-uint16_t Client::recvMessageSSL(SSL *ssl, char *messageBuffer){
+int Client::recvMessageSSL(SSL *ssl, char *messageBuffer){
     return SSL_read(ssl, messageBuffer, INPUT_BUFFER_SIZE);
 }
 
@@ -178,7 +173,11 @@ void Client::loop(){
     bzero(buffer, 256);
     // num_bytes = recv(socket_fd, buffer, 255, 0);
     num_bytes = recvMessageSSL(ssl, buffer);
-    buffer[num_bytes] = '\0';
+    if (num_bytes >= 0 && num_bytes < 256) {
+        buffer[num_bytes] = '\0';
+    } else {
+        buffer[255] = '\0';
+    }
     cout<<"buffer: "<<buffer<<endl;
 
     glz::read<glz::opts{.error_on_unknown_keys = false}>(recv_struct, buffer);
@@ -187,6 +186,10 @@ void Client::loop(){
 }
 int main(int argc, char *argv[])
 {   
+    if (argc < 4) {
+        cerr << "Usage: " << argv[0] << " <server_host> <cert_path> <key_path>\n";
+        return 1;
+    }
     struct hostent *server = gethostbyname(argv[1]); // 34.139.226.174
     char* digital_certificate_path = argv[2];
     char* privateKey_path = argv[3];

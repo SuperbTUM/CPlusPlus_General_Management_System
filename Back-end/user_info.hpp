@@ -8,10 +8,7 @@ using namespace std;
 
 #include <openssl/md5.h>
 
-string& encrypt_password(string& password) {
-    // auto encrypt = [&](char c) -> char{return c-1;};
-    // std::transform(password.begin(), password.end(), password.begin(), encrypt);
-    // return password;
+inline string& encrypt_password(string& password) {
     unsigned char hash[MD5_DIGEST_LENGTH];
 
     MD5_CTX md5;
@@ -19,10 +16,18 @@ string& encrypt_password(string& password) {
     MD5_Update(&md5, password.c_str(), password.size());
     MD5_Final(hash, &md5);
 
-    password = string(reinterpret_cast<char*>(hash));
+    char hex[MD5_DIGEST_LENGTH * 2 + 1];
+    for (int i = 0; i < MD5_DIGEST_LENGTH; i++) {
+        snprintf(hex + i * 2, 3, "%02x", hash[i]);
+    }
+    hex[MD5_DIGEST_LENGTH * 2] = '\0';
+    password = string(hex);
     return password;
 }
 
+inline string decrypt_password(const string& password) {
+    return password;
+}
 
 template<hashable T>
 struct UserInfo final {
@@ -36,8 +41,8 @@ struct UserInfo final {
             UserInfo() {};
             UserInfo(string username_, string password_, T identity_, T status_): username(username_), password(password_), identity(identity_), status(status_), activity(0) {};
             UserInfo(string username_, string password_, T identity_, T status_, int activity_): username(username_), password(password_), identity(identity_), status(status_), activity(activity_) {};
-            UserInfo(const UserInfo<T>& newuser): username(newuser->username), password(newuser->password), identity(newuser->identity), status(newuser->status), activity(newuser->activity) {};
-            UserInfo(UserInfo<T>&& newuser): username(std::move(newuser->username)), password(std::move(newuser->password)), identity(std::forward<T>(newuser->identity)), status(std::forward<T>(newuser->status)), activity(std::exchange(newuser->activity, 0)) {};
+            UserInfo(const UserInfo<T>& newuser): username(newuser.username), password(newuser.password), identity(newuser.identity), status(newuser.status), activity(newuser.activity) {};
+            UserInfo(UserInfo<T>&& newuser) noexcept: username(std::move(newuser.username)), password(std::move(newuser.password)), identity(std::move(newuser.identity)), status(std::move(newuser.status)), activity(std::exchange(newuser.activity, 0)) {};
             UserInfo& operator=(const UserInfo<T>& newuser) noexcept{
                 username = newuser.username;
                 password = newuser.password;
@@ -112,7 +117,7 @@ class db_user: public database{
         int delet(const string& primary_val, pair<string, variant<string, int, double>> deleted_info);
         void clean();
         void reorganize() {
-            sql = "DELETE FROM USER IF EXISTS;";
+            sql = "DELETE FROM USER;";
             rc = sqlite3_exec(db, sql.c_str(), c_callback<db_user>, 0, &zErrMsg);
             if (rc != SQLITE_OK) {
                 fprintf(stderr, "SQL error: %s\n", zErrMsg);

@@ -73,13 +73,6 @@ Client::Client(int port){
     setup(port);
 }
 
-Client::Client(const Client& orig){
-    socket_fd = orig.socket_fd;
-    num_bytes = orig.num_bytes;
-    char buffer[256];
-    strcpy(buffer, orig.buffer);
-}
-
 void Client::setup(int port){
 
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -89,24 +82,24 @@ void Client::setup(int port){
     serv_addr.sin_family = AF_INET;
 }
 
-uint16_t Client::sendMessage(Connector conn, const char *messageBuffer){
-    return send(conn.source_fd, messageBuffer, strlen(messageBuffer), 0);
+int Client::sendMessage(Connector conn, const char *messageBuffer){
+    return send(conn.getFd(), messageBuffer, strlen(messageBuffer), 0);
 }
 
-// uint16_t Client::sendMessageSSL(SSL *ssl, char *messageBuffer){
+// int Client::sendMessageSSL(SSL *ssl, char *messageBuffer){
 //     return SSL_write(ssl, messageBuffer, strlen(messageBuffer));
 // }
 
-uint16_t Client::sendMessage(Connector conn, char *messageBuffer){
-    return send(conn.source_fd, messageBuffer, strlen(messageBuffer), 0);
+int Client::sendMessage(Connector conn, char *messageBuffer){
+    return send(conn.getFd(), messageBuffer, strlen(messageBuffer), 0);
 }
 
-// uint16_t Client::sendMessageSSL(SSL *ssl, const char *messageBuffer){
+// int Client::sendMessageSSL(SSL *ssl, const char *messageBuffer){
 //     return SSL_write(ssl, messageBuffer, strlen(messageBuffer));
 // }
 
-uint16_t Client::recvMessage(Connector conn, char *messageBuffer){
-    return recv(conn.source_fd, messageBuffer, INPUT_BUFFER_SIZE, 0);
+int Client::recvMessage(Connector conn, char *messageBuffer){
+    return recv(conn.getFd(), messageBuffer, INPUT_BUFFER_SIZE, 0);
 }
 
 // uint16_t Client::recvMessageSSL(SSL *ssl, char *messageBuffer){

@@ -28,9 +28,9 @@ using json=nlohmann::json;
 #define BUFF_LENGTH 4096
 
 inline std::string escapeJsonString(std::string input){
-    regex re1("\\n");
-    regex re2("\\\\");
-    input = regex_replace(regex_replace(input, re2, "\\\\"), re1, "\\n");
+    std::regex re1("\\n");
+    std::regex re2("\\\\");
+    input = std::regex_replace(std::regex_replace(input, re2, "\\\\"), re1, "\\n");
     return input;
 }
      

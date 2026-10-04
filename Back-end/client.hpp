@@ -15,7 +15,6 @@
 // #include <nlohmann/json.hpp>
 // using json = nlohmann::json;
 #include "glaze/glaze.hpp"
-#include "glaze/core/macros.hpp"
 using namespace std;
 
 #if __has_include(<format>)
@@ -44,7 +43,7 @@ struct glz::meta<s1>
     "username", &T::username, "counts", &T::counts);
 };
 
-void ShowCerts(SSL *ssl){
+inline void ShowCerts(SSL *ssl){
     X509 *cert;
     char* line;
     cert = SSL_get_peer_certificate(ssl);
@@ -65,12 +64,12 @@ void ShowCerts(SSL *ssl){
 
 class Client{
     private:
-        int socket_fd, num_bytes;
+        int socket_fd{-1}, num_bytes{0};
         struct sockaddr_in serv_addr;
         char buffer[256];
-        struct hostent *server;
-        SSL_CTX* ctx;
-        SSL* ssl;
+        struct hostent *server{nullptr};
+        SSL_CTX* ctx{nullptr};
+        SSL* ssl{nullptr};
         s1 recv_struct{};
 
         int read_iterative(SSL* ssl, char* ptr, int size);
@@ -85,23 +84,26 @@ class Client{
             string status {};
         };
         struct Connector{
-            uint16_t source_fd;
+            int source_fd{-1};
+            int getFd() const { return source_fd; }
+            void setFd(int fd) { source_fd = fd; }
         };
         Client(char*, char*);
         Client(char*, char*, int);
-        Client(const Client& orig);
+        Client(const Client&) = delete;
+        Client& operator=(const Client&) = delete;
         virtual ~Client();
         void setup(const int, const char*, const char*);
         void loop();
         void initConnect(hostent *server);
 
-        uint16_t sendMessage(Connector conn, const char *messageBuffer);
-        uint16_t sendMessage(Connector conn, char *messageBuffer);
-        uint16_t recvMessage(Connector conn, char *messageBuffer);
+        int sendMessage(Connector conn, const char *messageBuffer);
+        int sendMessage(Connector conn, char *messageBuffer);
+        int recvMessage(Connector conn, char *messageBuffer);
 
-        uint16_t sendMessageSSL(SSL *ssl, char *messageBuffer);
-        uint16_t sendMessageSSL(SSL *ssl, const char *messageBuffer);
-        uint16_t recvMessageSSL(SSL *ssl, char *messageBuffer);
+        int sendMessageSSL(SSL *ssl, char *messageBuffer);
+        int sendMessageSSL(SSL *ssl, const char *messageBuffer);
+        int recvMessageSSL(SSL *ssl, char *messageBuffer);
 
 };
 #endif /* CLIENT_HPP */

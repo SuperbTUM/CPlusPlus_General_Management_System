@@ -17,6 +17,7 @@
 #include <exception>
 #include <atomic>
 #include <regex>
+#include <span>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 // #include <nlohmann/json.hpp>
@@ -38,6 +39,7 @@ using namespace std;
 // epoll
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <poll.h>
 #define EVENTS_SIZE 20
 
 #include <mutex>
@@ -82,7 +84,7 @@ inline std::string escapeJsonString(std::string input){
     return input;
 }
 
-void ShowCerts(SSL *ssl){
+inline void ShowCerts(SSL *ssl){
     X509 *cert;
     char* line;
     cert = SSL_get_peer_certificate(ssl);
@@ -118,19 +120,19 @@ class InterruptException : public std::exception
   };
 
 /// method to throw exception at signal interrupt
-void sig_to_exception(int s)
+inline void sig_to_exception(int s)
 {
     throw InterruptException(s);
 }
 
 struct Connector {
     private:
-        uint16_t source_fd;
+        int source_fd{-1};
     public:
-        Connector() {}
-        Connector(uint16_t fd): source_fd(fd) {};
-        void setFd(uint16_t fd_) {source_fd = fd_;}
-        uint16_t getFd() const {return source_fd;}
+        Connector() = default;
+        Connector(int fd): source_fd(fd) {};
+        void setFd(int fd_) {source_fd = fd_;}
+        int getFd() const {return source_fd;}
         ~Connector() = default;
 };
 
@@ -160,12 +162,12 @@ public:
     void onInput(void (*rc)(uint16_t fd, char *buffer));
     void onDisconnect(void (*dc)(uint16_t fd));
 
-    uint16_t sendMessage(Connector conn, const char *messageBuffer);
-    uint16_t sendMessage(Connector conn, char *messageBuffer);
-    uint16_t recvMessage(Connector conn, char *messageBuffer);
-    uint16_t sendMessageSSL(SSL *ssl, char *messageBuffer);
-    uint16_t sendMessageSSL(SSL *ssl, const char *messageBuffer);
-    uint16_t recvMessageSSL(SSL *ssl, char *messageBuffer);
+    int sendMessage(Connector conn, const char *messageBuffer);
+    int sendMessage(Connector conn, char *messageBuffer);
+    int recvMessage(Connector conn, char *messageBuffer);
+    int sendMessageSSL(SSL *ssl, char *messageBuffer);
+    int sendMessageSSL(SSL *ssl, const char *messageBuffer);
+    int recvMessageSSL(SSL *ssl, char *messageBuffer);
 
 private:
     const int max_concurrency = 8;
@@ -225,7 +227,7 @@ private:
 
 
     tuple<vector<string>, Connector> recvInputFromExisting(shared_ptr<db_user>, shared_ptr<question_bank>, Connector&);
-    void sendMsgToExisting(Connector&, vector<string> = vector<string>());
+    void sendMsgToExisting(Connector&, span<const string> = span<const string>());
     vector<string> registerUser(shared_ptr<db_user>, Connector& connect_fd, string& username, auto password, string& identity);
     vector<string> authenticateUser(shared_ptr<db_user>, Connector& conn, string& username, auto password);
     vector<string> logout(shared_ptr<db_user>, Connector&);

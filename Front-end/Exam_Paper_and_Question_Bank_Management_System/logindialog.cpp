@@ -86,7 +86,7 @@ void LoginDialog::submit_login(QString userName, QString password){
             connect(this,&LoginDialog::login_close_teacher,mainwindowPanel.get(),&MainWindow::close_question_management_panel);
             mainwindowPanel->open_question_management_panel();
             this->hide();
-        }else if(packet["identity"]=="rulemaker"){
+        }else if(packet["identity"]=="rulemaker" || packet["identity"]=="rule maker"){
             this->ruleMakerPanel=std::move(std::make_unique<RuleMakerDialog>(this,std::move(client)));
             // signal-slot connections for closing rulemaker panel
             connect(ruleMakerPanel.get(),&RuleMakerDialog::rulemaker_panel_be_closed,this,&LoginDialog::receive_rulemaker_panel_closure);

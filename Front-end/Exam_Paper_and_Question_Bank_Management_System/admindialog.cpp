@@ -93,7 +93,7 @@ void AdminDialog::register_user(QString userName, QString password){
     if(ui->checkBoxAdmin->isChecked())
         rawJson=fmt::format("{{\"command\": \"{}\", \"username\": \"{}\", \"password\": \"{}\",\"identity\":\"{}\"}}",
                                         "register user",userName.toStdString(),password.toStdString(),"admin");
-    else if(ui->checkBoxRuleMaker)
+    else if(ui->checkBoxRuleMaker->isChecked())
         rawJson=fmt::format("{{\"command\": \"{}\", \"username\": \"{}\", \"password\": \"{}\",\"identity\":\"{}\"}}",
                                         "register user",userName.toStdString(),password.toStdString(),"rule maker");
     else
