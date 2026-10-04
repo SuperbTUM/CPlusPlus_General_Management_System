@@ -86,6 +86,7 @@ void Server::initializeSocket()
 	#endif
 	int opt_value = 1;
 	int ret_test = setsockopt(mastersocket_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt_value, sizeof (int));
+	setsockopt(mastersocket_fd, IPPROTO_TCP, TCP_NODELAY, (char *) &opt_value, sizeof (int));
 	#ifdef SERVER_DEBUG
 	printf("[SERVER] setsockopt() ret %d\n", ret_test);
     #endif
@@ -162,6 +163,9 @@ void Server::handleNewConnection()
         return;
     } 
 
+    int nodelay_opt = 1;
+    setsockopt(tempsocket_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay_opt, sizeof(nodelay_opt));
+
     epoll_event ev{};
     ev.events = EPOLLIN;
     ev.data.fd = tempsocket_fd;
@@ -175,6 +179,7 @@ void Server::handleNewConnection()
 }
 
 void Server::sendMsgToExisting(Connector& connect_fd, span<const string> messages){
+    std::lock_guard<std::recursive_mutex> lock(state_mutex);
     vector<string> resend_buffer;
     if(messages.empty()) {
         // resend
@@ -196,7 +201,6 @@ void Server::sendMsgToExisting(Connector& connect_fd, span<const string> message
             archived_msg[connect_fd.getFd()].emplace_back(messages[i]);
             fmt::print("Message sent incomplete!\n");
         }
-        usleep(1000);
     }
 }
 
@@ -219,6 +223,16 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
         }
         epoll_ctl(eFd, EPOLL_CTL_DEL, fd, nullptr);
         close(fd);
+        {
+            std::lock_guard<std::recursive_mutex> lock(state_mutex);
+            auto it = bindUsername.find(fd);
+            if (it != bindUsername.end()) {
+                logined_users.erase(it->second);
+                bindUsername.erase(it);
+            }
+            bindIdentity.erase(fd);
+            archived_msg.erase(fd);
+        }
         return make_tuple<vector<string>, Connector>(std::move(messages), std::move(connect_fd));
     }
     #ifdef SERVER_DEBUG
@@ -244,54 +258,62 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     string teacher_name = recv_struct.teacher_name;
     string bulletin_text = recv_struct.bulletin_text;
 
+    string client_identity;
+    string client_username;
+    int teacher_target_fd = -1;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        auto it_id = bindIdentity.find(connect_fd.getFd());
+        if (it_id != bindIdentity.end()) client_identity = it_id->second;
+        auto it_un = bindUsername.find(connect_fd.getFd());
+        if (it_un != bindUsername.end()) client_username = it_un->second;
+        if (command == "write bulletin") {
+            auto it_teacher = logined_users.find(teacher_name);
+            if (it_teacher != logined_users.end()) teacher_target_fd = it_teacher->second;
+        }
+    }
+
     if(command == "login"){
         messages = authenticateUser(cur_user, connect_fd, username, password);
     }
-    else if(command == "get users" && 
-            bindIdentity.find(connect_fd.getFd()) != bindIdentity.end() && 
-            bindIdentity[connect_fd.getFd()] == "admin"){
+    else if(command == "get users" && client_identity == "admin"){
         messages = getUser(cur_user, connect_fd);
     }
     else if(command == "register user"){
-        // if(recv_message.contains("identity")) identity = recv_message["identity"].get<std::string>();
-        // else{
-        //     perror("No identity.\n");
-        //     // exit(1);
-        // }
         messages = registerUser(cur_user, connect_fd, username, password, identity);
     }
-    else if(command == "delete user" && bindIdentity.find(connect_fd.getFd()) != bindIdentity.end()){
-        if(bindIdentity[connect_fd.getFd()] == "admin") messages = deleteUser(cur_user, connect_fd, username);
+    else if(command == "delete user" && !client_identity.empty()){
+        if(client_identity == "admin") messages = deleteUser(cur_user, connect_fd, username);
         else messages = deleteUserSelf(cur_user, connect_fd, password);
     }
-    else if(command == "logout" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "logout" && !client_username.empty()) {
         messages = logout(cur_user, connect_fd);
     }
-    else if(command == "get teachers" && bindIdentity.find(connect_fd.getFd()) != bindIdentity.end() && bindIdentity[connect_fd.getFd()] == "rule maker") {
+    else if(command == "get teachers" && client_identity == "rule maker") {
         messages = getTeachers(cur_user);
     }
-    else if(command == "get subjects" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "get subjects" && !client_username.empty()) {
         messages = getSubjects(cur_question);
     }
-    else if(command == "get chapters" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "get chapters" && !client_username.empty()) {
         messages = getChapters(cur_question, subject_name);
     }
-    else if(command == "get questions" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "get questions" && !client_username.empty()) {
         messages = getQuestions(cur_question, subject_name, chapter_name);
     }
-    else if(command == "read question" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "read question" && !client_username.empty()) {
         messages = getQuestions(cur_question, subject_name, chapter_name, question_id);
     }
-    else if(command == "write question" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "write question" && !client_username.empty()) {
         messages = writeQuestion(cur_question, subject_name, chapter_name, question_id, question_text);
     }
-    else if(command == "delete question" && bindUsername.find(connect_fd.getFd()) != bindUsername.end()) {
+    else if(command == "delete question" && !client_username.empty()) {
         messages = deleteQuestion(cur_question, subject_name, chapter_name, question_id);
     }
-    else if(command == "write subject" && bindIdentity.find(connect_fd.getFd()) != bindIdentity.end() && bindIdentity[connect_fd.getFd()] == "teacher") {
+    else if(command == "write subject" && client_identity == "teacher") {
         messages = addSubject(cur_question, subject_name);
     }
-    else if(command == "write chapter" && bindIdentity.find(connect_fd.getFd()) != bindIdentity.end() && bindIdentity[connect_fd.getFd()] == "teacher") {
+    else if(command == "write chapter" && client_identity == "teacher") {
         messages = addChapter(cur_question, subject_name, chapter_name);
     }
     else if(command == "read bulletin") {
@@ -317,7 +339,7 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     //memset(&input_buffer, 0, INPUT_BUFFER_SIZE); //zero buffer //bzero
     // bzero(&input_buffer,INPUT_BUFFER_SIZE); //clear input buffer
     Connector target_connector;
-    if(command == "write bulletin")   target_connector = Connector(logined_users[teacher_name]);
+    if(command == "write bulletin" && teacher_target_fd != -1) target_connector = Connector(teacher_target_fd);
     else target_connector = Connector(connect_fd);
     return make_tuple<vector<string>, Connector>(std::move(messages), std::move(target_connector));
 }
@@ -380,9 +402,12 @@ vector<string> Server::authenticateUser(std::shared_ptr<db_user> cur_user, Conne
     fmt::print("checkin message: {}\n", message);
     messages.emplace_back(std::forward<string>(message));
     
-    bindIdentity[connect_fd.getFd()] = identity;
-    bindUsername[connect_fd.getFd()] = username;
-    logined_users[username] = connect_fd.getFd();
+    if(status_code == 200) {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        bindIdentity[connect_fd.getFd()] = identity;
+        bindUsername[connect_fd.getFd()] = username;
+        logined_users[username] = connect_fd.getFd();
+    }
     return messages;
 }
 
@@ -406,7 +431,10 @@ vector<string> Server::registerUser(std::shared_ptr<db_user> cur_user, Connector
     // messages.push_back(message);
     // messages.push_back(std::move(message));
     messages.emplace_back(std::forward<string>(message));
-    usernameSet.insert(username);
+    if(status_code == 200) {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        usernameSet.insert(username);
+    }
     return messages;
 }
 
@@ -414,7 +442,12 @@ vector<string> Server::registerUser(std::shared_ptr<db_user> cur_user, Connector
 vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& connect_fd){
     int status_code;
     int activity_updated = 0;
-    string username = bindUsername[connect_fd.getFd()];
+    string username;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        auto it = bindUsername.find(connect_fd.getFd());
+        if (it != bindUsername.end()) username = it->second;
+    }
     vector<pair<string, variant<string, int, double>>> constraint;
     constraint.emplace_back("activity", activity_updated);
     int res = cur_user->update(std::as_const(username), constraint);
@@ -424,9 +457,10 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
         status_code = 403;
     }
     else {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
         bindUsername.erase(connect_fd.getFd());
         bindIdentity.erase(connect_fd.getFd());
-        logined_users.erase(username);
+        if (!username.empty()) logined_users.erase(username);
         status_code = 200;
     }
     vector<string> messages;
@@ -441,11 +475,15 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
 }
 
 int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
-    auto it = logined_users.find(username);
-    if(it == logined_users.end()){
-        return -1;
+    int source_fd = -1;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        auto it = logined_users.find(username);
+        if(it == logined_users.end()){
+            return -1;
+        }
+        source_fd = it->second;
     }
-    int source_fd = it->second;
     vector<pair<string, variant<string, int, double>>> constraint;
     constraint.emplace_back("activity", 0);
     int res = cur_user->update(std::as_const(username), constraint);
@@ -453,12 +491,15 @@ int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
         // cout<<"logout failed."<<endl;
         fmt::print("logout failed.\n");
     } else {
-        logined_users.erase(it);
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        logined_users.erase(username);
+        if (source_fd != -1) {
+            bindIdentity.erase(source_fd);
+            bindUsername.erase(source_fd);
+        }
     }
     // cout<<"Logout from other device successfully!"<<endl;
     fmt::print("Logout from other device successfully!\n");
-    bindIdentity.erase(source_fd);
-    bindUsername.erase(source_fd);
     return res;
 }
 
@@ -500,13 +541,23 @@ vector<string> Server::getUser(std::shared_ptr<db_user> cur_user, Connector& con
 vector<string> Server::deleteUser(std::shared_ptr<db_user> cur_user, Connector& connect_fd, string& username){
     int status_code = 200;
 
-    auto un = usernameSet.find(username);
-    if(un != usernameSet.end()) {
-        status_code = 200;
-        usernameSet.erase(un);
-        if(user_count_cache > 0) user_count_cache --;
-    } else {
-        status_code = 403;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        auto un = usernameSet.find(username);
+        if(un != usernameSet.end()) {
+            status_code = 200;
+            usernameSet.erase(un);
+            if(user_count_cache > 0) user_count_cache --;
+        } else {
+            status_code = 403;
+        }
+        auto login_it = logined_users.find(username);
+        if (login_it != logined_users.end()) {
+            int target_fd = login_it->second;
+            logined_users.erase(login_it);
+            bindIdentity.erase(target_fd);
+            bindUsername.erase(target_fd);
+        }
     }
     
     // with database logic
@@ -529,34 +580,39 @@ vector<string> Server::deleteUser(std::shared_ptr<db_user> cur_user, Connector& 
 }
 
 vector<string> Server::deleteUserSelf(std::shared_ptr<db_user> cur_user, Connector& connect_fd, auto password){
-    string username = bindUsername[connect_fd.getFd()];
-    int status_code;
+    string username;
+    int status_code = 200;
 
-    auto identity_iter = bindIdentity.find(connect_fd.getFd());
-    if(identity_iter == bindIdentity.end()){
-        status_code = 403;
-        // cout<<"Identity not found!"<<endl;
-        fmt::print("Identity not found!\n");
-    } else {
-        status_code = 200;
-        // cout<<"Identity found!"<<endl;
-        fmt::print("Identity found!\n");
-        bindIdentity.erase(identity_iter);
-        if(user_count_cache > 0) user_count_cache --;
-        // bindUsername.erase(it);
-    }
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        int fd = connect_fd.getFd();
+        auto identity_iter = bindIdentity.find(fd);
+        if(identity_iter == bindIdentity.end()){
+            status_code = 403;
+            // cout<<"Identity not found!"<<endl;
+            fmt::print("Identity not found!\n");
+        } else {
+            status_code = 200;
+            // cout<<"Identity found!"<<endl;
+            fmt::print("Identity found!\n");
+            bindIdentity.erase(identity_iter);
+            if(user_count_cache > 0) user_count_cache --;
+        }
 
-    auto username_iter = bindUsername.find(connect_fd.getFd());
-    if(username_iter == bindUsername.end()){
-        status_code = 403;
-        // cout<<"Username not found!"<<endl;
-        fmt::print("Username not found!\n");
-    } else {
-        status_code = 200;
-        // cout<<"Username found!"<<endl;
-        fmt::print("Username found!\n");
-        // bindIdentity.erase(it);
-        bindUsername.erase(username_iter);
+        auto username_iter = bindUsername.find(fd);
+        if(username_iter == bindUsername.end()){
+            status_code = 403;
+            // cout<<"Username not found!"<<endl;
+            fmt::print("Username not found!\n");
+        } else {
+            username = username_iter->second;
+            status_code = 200;
+            // cout<<"Username found!"<<endl;
+            fmt::print("Username found!\n");
+            bindUsername.erase(username_iter);
+            logined_users.erase(username);
+            usernameSet.erase(username);
+        }
     }
 
     // with database logic
@@ -693,10 +749,14 @@ vector<string> Server::getChapters(std::shared_ptr<question_bank> cur_question, 
 vector<string> Server::addSubject(std::shared_ptr<question_bank> cur_question, string& subject) {
     int status_code;
     vector<string> messages;
-    bool existence;
-    if(subject_cache.contains(subject)) {
-        existence = true;
-    } else {
+    bool existence = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        if(subject_cache.contains(subject)) {
+            existence = true;
+        }
+    }
+    if(!existence) {
         // optional<pair<string, variant<string, int, double>>> count_info;
         // count_info = std::make_pair("subject", subject);
         // const string target_attribute = "subject";
@@ -717,6 +777,7 @@ vector<string> Server::addSubject(std::shared_ptr<question_bank> cur_question, s
         if(rc < 0) status_code = 403;
         else {
             status_code = 200;
+            std::lock_guard<std::recursive_mutex> lock(state_mutex);
             subject_cache.insert(subject);
             if(subject_count_cache >= 0) subject_count_cache ++;
         } 
@@ -739,10 +800,14 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
     int status_code;
     vector<string> messages;
     const string target_attribute = "chapter";
-    bool existence;
-    if(subject_cache.contains(subject)) {
-        existence = true;
-    } else {
+    bool existence = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        if(subject_cache.contains(subject)) {
+            existence = true;
+        }
+    }
+    if (!existence) {
         // optional<pair<string, variant<string, int, double>>> count_info;
         // count_info = std::make_pair("subject", subject);
         // existence = question->countDistinct(target_attribute, count_info);
@@ -752,15 +817,20 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
     }
 
     if(existence) {
-        if(chapter_cache.contains(subject) && chapter_cache[subject].contains(chapter)) {
-            existence = true;
-        } else {
+        bool chapter_exists = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(state_mutex);
+            if(chapter_cache.contains(subject) && chapter_cache[subject].contains(chapter)) {
+                chapter_exists = true;
+            }
+        }
+        if (!chapter_exists) {
             vector<pair<string, string>> count_infos{std::make_pair("subject", subject), std::make_pair("chapter", chapter)};
             // existence = question->countDistinct(target_attribute, count_infos);
-            existence = cur_question->checkExistence(count_infos);
+            chapter_exists = cur_question->checkExistence(count_infos);
         }
         int rc;
-        if(!existence) {
+        if(!chapter_exists) {
             // cout<<"Add a new chapter to the question bank."<<endl;
             fmt::print("Add a new chapter to the question bank.\n");
             const std::shared_ptr<QuestionInfo<string>> new_question = std::make_shared<QuestionInfo<string>>("placeholder", "placeholder", chapter, subject);
@@ -768,6 +838,7 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
             if(rc < 0) status_code = 403;
             else {
                 status_code = 200;
+                std::lock_guard<std::recursive_mutex> lock(state_mutex);
                 chapter_cache[subject].insert(chapter);
             }
         } else {
@@ -941,11 +1012,6 @@ void Server::loop()
 
     int num_threads = min(max_concurrency, eNum);
 
-    //loop the fd_set and check which socket has interactions available
-    // experimental
-    vector<Connector> target_connectors(eNum, Connector(-1));
-    vector<vector<string>> messages_list(eNum, vector<string>());
-    // experimental
     #pragma omp parallel for schedule(auto) num_threads(num_threads) 
     for (int i = 0; i < eNum; i++) {
         if(events[i].data.fd == mastersocket_fd) {
@@ -954,10 +1020,21 @@ void Server::loop()
 
         // check if there is a potential disconnection
         if(events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
-            epoll_ctl(eFd, EPOLL_CTL_DEL, events[i].data.fd, nullptr);
-            close(events[i].data.fd);
+            int closed_fd = events[i].data.fd;
+            epoll_ctl(eFd, EPOLL_CTL_DEL, closed_fd, nullptr);
+            close(closed_fd);
+            {
+                std::lock_guard<std::recursive_mutex> lock(state_mutex);
+                auto it = bindUsername.find(closed_fd);
+                if (it != bindUsername.end()) {
+                    logined_users.erase(it->second);
+                    bindUsername.erase(it);
+                }
+                bindIdentity.erase(closed_fd);
+                archived_msg.erase(closed_fd);
+            }
             // cout<<"Connection "<<events[i].data.fd<<" has been closed."<<endl;
-            fmt::print("Connection {} has been closed.\n", static_cast<int>(events[i].data.fd));
+            fmt::print("Connection {} has been closed.\n", static_cast<int>(closed_fd));
         } else if (events[i].events & EPOLLIN) {
             //exisiting connection has new data
             Connector connect_fd = Connector(events[i].data.fd);
@@ -968,20 +1045,11 @@ void Server::loop()
                 messages.shrink_to_fit();
                 bool user_safe = users[thread_idx]->check_threadsafe();
                 bool question_safe = questions[thread_idx]->check_threadsafe();
-                if(!user_safe || !question_safe) fmt::print("Warning: database not thread-safe!\n");// cout<<"Warning: database not thread-safe!"<<endl;
-                //sendMsgToExisting(target_connector, messages);
-                //bzero(&input_buffer,INPUT_BUFFER_SIZE); //clear input buffer
-                target_connectors[i] = target_connector;
-                messages_list[i] = messages;
+                if(!user_safe || !question_safe) fmt::print("Warning: database not thread-safe!\n");
+                if (target_connector.getFd() != -1) {
+                    sendMsgToExisting(target_connector, messages);
+                }
             }
-        }
-    }
-    // Sequentially send to the clients
-    for(int i = 0; i < eNum; i++) {
-        Connector cur_connector = target_connectors[i];
-        vector<string> cur_messages = messages_list[i];
-        if (cur_connector.getFd() != -1) {
-            sendMsgToExisting(cur_connector, cur_messages);
         }
     }
 }
@@ -1024,8 +1092,10 @@ int Server::sendMessage(Connector conn, const char *messageBuffer) {
         int sent = send(fd, messageBuffer + total_sent, len - total_sent, 0);
         if (sent < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                usleep(1000);
-                continue;
+                struct pollfd pfd{fd, POLLOUT, 0};
+                int pr = poll(&pfd, 1, 10);
+                if (pr > 0 && (pfd.revents & POLLOUT)) continue;
+                return -1;
             }
             return -1;
         }
@@ -1077,7 +1147,8 @@ int main(int argc, char* argv[]){
     sigaction(SIGINT, &sigIntHandler, NULL);
 
     // Server server_object = Server();
-    shared_ptr<Server> server_object = Server::getInstance();
+    int port = (argc > 1) ? atoi(argv[1]) : DEFAULT_PORT;
+    shared_ptr<Server> server_object = Server::getInstance(port);
     server_object->init();
     try {
         while(true){

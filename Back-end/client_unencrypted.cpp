@@ -78,6 +78,8 @@ void Client::setup(int port){
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) 
         error("ERROR opening socket");
+    int opt = 1;
+    setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&opt, sizeof(opt));
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
 }
@@ -345,7 +347,6 @@ void Client::loop(){
         // string teacher = response["username"];
         glz::read<glz::opts{.error_on_unknown_keys = false}>(recv_struct, buffer);
         string teacher = recv_struct.username;
-        usleep(1000);
     }
 
 
@@ -374,8 +375,13 @@ void Client::loop(){
 }
 int main(int argc, char *argv[])
 {   
+    if (argc < 2) {
+        fmt::print("Usage: {} <host> [port]\n", argv[0]);
+        return 1;
+    }
     struct hostent *server = gethostbyname(argv[1]); // 34.139.226.174
-    Client client = Client();
+    int port = (argc > 2) ? atoi(argv[2]) : PORT;
+    Client client = Client(port);
     client.initConnect(server);
     client.loop();
     return 0;

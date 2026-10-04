@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h> //sockaddr, socklen_t
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <iostream>
@@ -202,6 +203,7 @@ private:
     char remote_ip[INET6_ADDRSTRLEN];
     //int numbytes;
     SSL_CTX* ctx;
+    mutable std::recursive_mutex state_mutex;
     map<int, SSL*> ssl_map;
 
     vector<std::shared_ptr<db_user>> users;

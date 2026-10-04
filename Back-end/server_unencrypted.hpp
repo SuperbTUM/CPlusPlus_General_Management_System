@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h> //sockaddr, socklen_t
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <iostream>
@@ -38,6 +39,7 @@ using namespace std;
 // epoll
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <poll.h>
 #define EVENTS_SIZE 20
 
 #include <mutex>
@@ -184,6 +186,7 @@ private:
     vector<std::shared_ptr<db_user>> users;
     vector<std::shared_ptr<question_bank>> questions;
 
+    mutable std::recursive_mutex state_mutex;
     unordered_map<int, string> bindIdentity;
     unordered_map<int, string> bindUsername;
     unordered_set<string> usernameSet;

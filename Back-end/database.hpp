@@ -23,6 +23,7 @@
 #include <type_traits>
 #include <utility>
 #include <memory>
+#include <mutex>
 
 using namespace std;
 
@@ -133,18 +134,13 @@ class database{
                 vector<T> row;
                 num_cols = sqlite3_column_count(stmt);
                 for(int i = 0; i < num_cols; i++){
-                    switch(sqlite3_column_type(stmt, i)){
-                        case(SQLITE3_TEXT):
-                        if constexpr(std::is_same_v<T, std::string>) row.push_back(std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i))));
-                        break;
-                        case(SQLITE_INTEGER):
-                        if constexpr(std::is_same_v<T, int>) row.push_back(sqlite3_column_int(stmt, i));
-                        break;
-                        case(SQLITE_FLOAT):
-                        if constexpr(std::is_same_v<T, double>) row.push_back(sqlite3_column_double(stmt, i));
-                        break;
-                        default:
-                        break;
+                    if constexpr(std::is_same_v<T, std::string>) {
+                        const unsigned char* text = sqlite3_column_text(stmt, i);
+                        row.push_back(text ? std::string(reinterpret_cast<const char*>(text)) : std::string());
+                    } else if constexpr(std::is_same_v<T, int>) {
+                        row.push_back(sqlite3_column_int(stmt, i));
+                    } else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) {
+                        row.push_back(sqlite3_column_double(stmt, i));
                     }
                 }
                 output.insert(output.end(), row.begin(), row.end());

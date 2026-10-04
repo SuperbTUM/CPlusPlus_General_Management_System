@@ -82,6 +82,8 @@ void Client::setup(const int port, const char* digital_certificate_path, const c
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) 
         error("ERROR opening socket");
+    int nodelay_opt = 1;
+    setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&nodelay_opt, sizeof(nodelay_opt));
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
 }

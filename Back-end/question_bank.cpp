@@ -35,6 +35,7 @@ void question_bank::create(bool clear/*= false*/, const char* database_name/*= "
       fprintf(stdout, "Opened database successfully\n");
    }
    db = up.get();
+   sqlite3_busy_timeout(db, 5000);
    /* Create SQL statement */
 
    // experimental
@@ -74,17 +75,23 @@ void question_bank::create(bool clear/*= false*/, const char* database_name/*= "
    sqlite3_prepare_v2(db, sql_insert.c_str(), -1, &stmt_insert, NULL);
 }
 
+static std::mutex question_write_mutex;
+
 int question_bank::insert(const std::shared_ptr<QuestionInfo<string>>& question){
-   // string path = question->path;
-   // string content = question->content;
-   // string chapter = question->chapter;
-   // string category = question->category;
-   // int rubric = question->rubric;
    auto [path, content, chapter, category, rubric] = question->getElements();
    if(category.empty()) category = "undefined";
-   // sql = fmt::format("INSERT INTO QUESTIONS (PATH, CONTENT, CHAPTER, SUBJECT, RUBRIC) "  \
-   //          "VALUES ('{}', '{}', '{}', '{}', '{}'); COMMIT;", path, content, chapter, category, rubric);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+
+   std::lock_guard<std::mutex> lock(question_write_mutex);
+
+   sqlite3_reset(stmt_insert);
+   sqlite3_clear_bindings(stmt_insert);
+
+   int b_rc = sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   if(b_rc != SQLITE_OK) {
+       fprintf(stderr, "BEGIN TRANSACTION error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+       return -1;
+   }
 
    sqlite3_bind_text(stmt_insert, 1, path.c_str(), -1, SQLITE_TRANSIENT);
    sqlite3_bind_text(stmt_insert, 2, content.c_str(), -1, SQLITE_TRANSIENT);
@@ -92,27 +99,32 @@ int question_bank::insert(const std::shared_ptr<QuestionInfo<string>>& question)
    sqlite3_bind_text(stmt_insert, 4, category.c_str(), -1, SQLITE_TRANSIENT);
    sqlite3_bind_int(stmt_insert, 5, rubric);
 
-   // rc = sqlite3_exec(db, sql.c_str(), c_callback<question_bank>, 0, &zErrMsg);
    rc = sqlite3_step(stmt_insert);
    if (rc != SQLITE_DONE) {
-         fprintf(stderr, "SQL error: %s\n", zErrMsg);
-         sqlite3_free(zErrMsg);
+         fprintf(stderr, "SQL error: %s (rc=%d)\n", sqlite3_errmsg(db), rc);
+         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+         sqlite3_reset(stmt_insert);
          return -1;
    } else {
          fprintf(stdout, "Inserted into table successfully\n");
    }
-   sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &zErrMsg);
-   // sqlite3_clear_bindings(stmt_insert); // This is not necessary
+   sqlite3_exec(db, "COMMIT", NULL, NULL, &zErrMsg);
+   if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    sqlite3_reset(stmt_insert);
    return rc;
 }
 
 int question_bank::update(vector<pair<string, string>> primary_pairs, vector<pair<string, variant<string, int, double>>> changelist){
+   std::lock_guard<std::mutex> lock(question_write_mutex);
    std::set<string> keys;
    string key;
    sql.clear();
    string sql_tmp = "";
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   int b_rc = sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   if(b_rc != SQLITE_OK) {
+       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+       return -1;
+   }
    while(!changelist.empty()){
       auto changed = changelist.back();
       key = changed.first;
@@ -124,9 +136,11 @@ int question_bank::update(vector<pair<string, string>> primary_pairs, vector<pai
       }
       keys.insert(key);
 
-      // std::array<string, 3> primary_keys({"PATH", "CHAPTER", "SUBJECT"});
       auto primary_keys = std::to_array<string>({"PATH", "CHAPTER", "SUBJECT"});
-      if(std::find(primary_keys.begin(), primary_keys.end(), key) != primary_keys.end()) return -1;
+      if(std::find(primary_keys.begin(), primary_keys.end(), key) != primary_keys.end()) {
+          sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+          return -1;
+      }
       
       sql_tmp = fmt::format("UPDATE QUESTIONS set {} = '{}' where ", key, custom_to_string(value));
       for(int i=0; i<primary_pairs.size()-1; i++) sql_tmp += fmt::format("{} = '{}' AND ", primary_pairs[i].first, primary_pairs[i].second);
@@ -135,14 +149,15 @@ int question_bank::update(vector<pair<string, string>> primary_pairs, vector<pai
    }
    rc = sqlite3_exec(db, sql.c_str(), c_callback<question_bank>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-      fprintf(stderr, "SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
+      fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+      if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
       return -1;
    } else {
-      // fprintf(stdout, "Table updated successfully\n");
       fmt::print("Table updated successfully\n");
    }
-   sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &zErrMsg);
+   sqlite3_exec(db, "COMMIT", NULL, NULL, &zErrMsg);
+   if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    return rc;
 }
 
@@ -294,6 +309,7 @@ vector<string> question_bank::getQuestionPaths(){
 }
 
 int question_bank::delet(vector<pair<string, string>> primary_pairs){
+   std::lock_guard<std::mutex> lock(question_write_mutex);
    sql = fmt::format("DELETE from QUESTIONS where ");
    for(int i=0; i<primary_pairs.size(); i++){
       if(i < primary_pairs.size()-1)  sql += fmt::format("{} = '{}' AND ", primary_pairs[i].first, primary_pairs[i].second);
@@ -302,8 +318,8 @@ int question_bank::delet(vector<pair<string, string>> primary_pairs){
    
    rc = sqlite3_exec(db, sql.c_str(), c_callback<question_bank>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-      fprintf(stderr, "SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
+      fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+      if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
       return -1;
    } else {
       fprintf(stdout, "Element(s) deleted successfully\n");
@@ -312,11 +328,12 @@ int question_bank::delet(vector<pair<string, string>> primary_pairs){
 }
 
 void question_bank::clean(){
+   std::lock_guard<std::mutex> lock(question_write_mutex);
    sql = "DROP TABLE IF EXISTS QUESTIONS;";
    rc = sqlite3_exec(db, sql.c_str(), c_callback<question_bank>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-      fprintf(stderr, "SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
+      fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+      if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    } else {
       fprintf(stdout, "Table dropped successfully\n");
    }

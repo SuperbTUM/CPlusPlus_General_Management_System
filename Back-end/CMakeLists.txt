@@ -48,3 +48,21 @@ target_link_libraries(client_unencrypted PRIVATE
     fmt::fmt-header-only
     glaze::glaze
 )
+
+add_executable(server_ssl server.cpp)
+target_link_libraries(server_ssl PRIVATE
+    fmt::fmt-header-only
+    glaze::glaze
+    sqlite3
+    ssl
+    crypto
+    OpenMP::OpenMP_CXX
+)
+
+add_executable(client_ssl client.cpp)
+target_link_libraries(client_ssl PRIVATE
+    fmt::fmt-header-only
+    glaze::glaze
+    ssl
+    crypto
+)

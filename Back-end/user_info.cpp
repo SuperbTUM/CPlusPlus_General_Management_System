@@ -35,6 +35,7 @@ void db_user::create(bool clear/*= false*/, const char* database_name/*= "userin
       fprintf(stdout, "Opened database successfully\n");
    }
    db = up.get();
+   sqlite3_busy_timeout(db, 5000);
    /* Create SQL statement */
    // experimental
    rc = sqlite3_exec(db, "pragma journal_mode = WAL", NULL, 0, &zErrMsg);
@@ -81,19 +82,24 @@ void db_user::create(bool clear/*= false*/, const char* database_name/*= "userin
    
 }
 
-int db_user::insert(const std::shared_ptr<UserInfo<string>>& user){
-   // string identity = user->identity;
-   // string username = user->username;
-   // string password = user->password;
-   // string status = user->status;
-   // int activity = user->activity;
+static std::mutex user_write_mutex;
 
+int db_user::insert(const std::shared_ptr<UserInfo<string>>& user){
    auto [username, password, identity, status, activity] = user->getElements();
    password = encrypt_password(password);
    if(status.empty()) status = "valid";
-   // sql = fmt::format("INSERT INTO USER (USERNAME, PASSWORD, IDENTITY, STATUS, ACTIVITY) "  \
-   //          "VALUES ('{}', '{}', '{}', '{}', '{}'); COMMIT;", username, password, identity, status, activity);
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+
+   std::lock_guard<std::mutex> lock(user_write_mutex);
+
+   sqlite3_reset(stmt_insert);
+   sqlite3_clear_bindings(stmt_insert);
+
+   int b_rc = sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   if(b_rc != SQLITE_OK) {
+       fprintf(stderr, "BEGIN TRANSACTION error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+       return -1;
+   }
 
    sqlite3_bind_text(stmt_insert, 1, username.c_str(), -1, SQLITE_TRANSIENT);
    sqlite3_bind_text(stmt_insert, 2, password.c_str(), -1, SQLITE_TRANSIENT);
@@ -101,25 +107,30 @@ int db_user::insert(const std::shared_ptr<UserInfo<string>>& user){
    sqlite3_bind_text(stmt_insert, 4, status.c_str(), -1, SQLITE_TRANSIENT);
    sqlite3_bind_int(stmt_insert, 5, activity);
 
-   // rc = sqlite3_exec(db, sql.c_str(), c_callback<db_user>, 0, &zErrMsg);
    rc = sqlite3_step(stmt_insert);
    if (rc != SQLITE_DONE) {
-         fprintf(stderr, "SQL error: %s\n", zErrMsg);
-         sqlite3_free(zErrMsg);
+         fprintf(stderr, "SQL error: %s (rc=%d)\n", sqlite3_errmsg(db), rc);
+         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+         sqlite3_reset(stmt_insert);
          return -1;
    } else {
          fprintf(stdout, "Inserted into table successfully\n");
    }
-   sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &zErrMsg);
-   // sqlite3_clear_bindings(stmt_insert); // This is not necessary
+   sqlite3_exec(db, "COMMIT", NULL, NULL, &zErrMsg);
+   if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    sqlite3_reset(stmt_insert);
-   return rc; // 101
+   return rc;
 }
 
 int db_user::update(const string& primary_val, vector<pair<string, variant<string, int, double>>> changelist){
+   std::lock_guard<std::mutex> lock(user_write_mutex);
    std::set<string> keys;
    string key;
-   sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   int b_rc = sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION", NULL, NULL, &zErrMsg);
+   if(b_rc != SQLITE_OK) {
+       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+       return -1;
+   }
    sql.clear();
    while(!changelist.empty()){
       auto changed = changelist.back();
@@ -132,7 +143,10 @@ int db_user::update(const string& primary_val, vector<pair<string, variant<strin
       }
       keys.insert(key);
       
-      if(key == "USERNAME") return -1;
+      if(key == "USERNAME") {
+         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+         return -1;
+      }
       if(key == "PASSWORD") {
          value = encrypt_password(std::get<string>(value));
       }
@@ -140,13 +154,15 @@ int db_user::update(const string& primary_val, vector<pair<string, variant<strin
    }
    rc = sqlite3_exec(db, sql.c_str(), c_callback<db_user>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-         fprintf(stderr, "SQL error: %s\n", zErrMsg);
-         sqlite3_free(zErrMsg);
+         fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+         if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
+         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
          return -1;
    } else {
          fprintf(stdout, "Table updated successfully\n");
    }
-   sqlite3_exec(db, "END TRANSACTION", NULL, NULL, &zErrMsg);
+   sqlite3_exec(db, "COMMIT", NULL, NULL, &zErrMsg);
+   if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    return rc;
 }
 
@@ -274,13 +290,14 @@ int db_user::countDistinct(const string& target_attribute, pair<string, variant<
 }
 
 int db_user::delet(const string& primary_val, pair<string, variant<string, int, double>> authenticated_info){
+   std::lock_guard<std::mutex> lock(user_write_mutex);
    string key = authenticated_info.first;
    auto value = authenticated_info.second;
-   sql = fmt::format("DELETE from USER where USERNAME = '{}' AND {} = '{}'; COMMIT;", primary_val, key, custom_to_string(value));
+   sql = fmt::format("DELETE from USER where USERNAME = '{}' AND {} = '{}';", primary_val, key, custom_to_string(value));
    rc = sqlite3_exec(db, sql.c_str(), c_callback<db_user>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-      fprintf(stderr, "SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
+      fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+      if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
       return -1;
    } else {
       fprintf(stdout, "Element(s) deleted successfully\n");
@@ -289,11 +306,12 @@ int db_user::delet(const string& primary_val, pair<string, variant<string, int, 
 }
 
 void db_user::clean(){
+   std::lock_guard<std::mutex> lock(user_write_mutex);
    sql = "DROP TABLE IF EXISTS USER;";
    rc = sqlite3_exec(db, sql.c_str(), c_callback<db_user>, 0, &zErrMsg);
    if (rc != SQLITE_OK) {
-      fprintf(stderr, "SQL error: %s\n", zErrMsg);
-      sqlite3_free(zErrMsg);
+      fprintf(stderr, "SQL error: %s\n", zErrMsg ? zErrMsg : sqlite3_errmsg(db));
+      if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    } else {
       fprintf(stdout, "Table dropped successfully\n");
    }
