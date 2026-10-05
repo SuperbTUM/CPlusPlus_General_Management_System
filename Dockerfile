@@ -1,27 +1,57 @@
-FROM ubuntu:bionic AS build
+# Stage 1: Build environment with GCC 14 and CMake 3.31+
+FROM ubuntu:24.04 AS builder
 
-RUN apt-get update && apt install -y build-essential manpages-dev software-properties-common ca-certificates
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN add-apt-repository ppa:ubuntu-toolchain-r/test
-RUN wget -no-check-certificate -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
-RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 42D5A192B819C5DA
-RUN apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main'
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-14 \
+    g++-14 \
+    make \
+    git \
+    wget \
+    libssl-dev \
+    libsqlite3-dev \
+    libomp-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && \
-	apt-get install -y git gcc-11 g++-11 cmake autoconf libtool pkg-config libssl-dev libsqlite3-dev
+# Set GCC 14 as default compiler
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
-WORKDIR /root/CPlusPlus_General_Management_System/Back-end/
-COPY ./Back-end .
-RUN cd Back-end/
+# Install official CMake 3.31 binary from Kitware (required by Glaze)
+RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.31.5/cmake-3.31.5-linux-x86_64.tar.gz && \
+    tar -xzf cmake-3.31.5-linux-x86_64.tar.gz -C /usr/local --strip-components=1 && \
+    rm cmake-3.31.5-linux-x86_64.tar.gz
 
-RUN rm -rf fmt/ && git clone https://github.com/fmtlib/fmt.git
-RUN rm -rf glaze/ && git clone https://github.com/stephenberry/glaze.git
-RUN rm -rf SQLite3-Encryption/ && git clone https://github.com/rindeal/SQLite3-Encryption.git
+WORKDIR /app/Back-end
 
-RUN mkdir build && cd build && cmake .. 
-RUN make
+# Copy Back-end source code
+COPY Back-end/ /app/Back-end/
+
+# Build and verify with test suites
+RUN mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j$(nproc) && \
+    ./bin/modern_cpp_test && \
+    ./bin/e2e_network_test
+
+# Stage 2: Minimal runtime image
+FROM ubuntu:24.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 \
+    libssl3 \
+    libgomp1 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy compiled binaries from builder stage
+COPY --from=builder /app/Back-end/build/bin/ /app/bin/
+
 EXPOSE 9999
 
-FROM ubuntu:bionic
-WORKDIR bin
-ENTRYPOINT ["./cplusplusproject2022fall"]
+ENTRYPOINT ["/app/bin/cplusplusproject2022fall"]
+CMD ["9999"]

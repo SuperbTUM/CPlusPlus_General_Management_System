@@ -33,7 +33,9 @@ using namespace std;
 #include <format>
 #endif
 
+#ifndef FMT_HEADER_ONLY
 #define FMT_HEADER_ONLY
+#endif
 #include <fmt/format.h>
 
 // epoll
@@ -43,7 +45,11 @@ using namespace std;
 #define EVENTS_SIZE 20
 
 #include <mutex>
+#include <shared_mutex>
 #include <csignal>
+#include <thread>
+#include <stop_token>
+#include "coroutine_task.hpp"
 
 const int max_concurrency = 8;
 
@@ -59,6 +65,9 @@ struct s1 {
     string bulletin_name{};
     string teacher_name{};
     string bulletin_text{};
+
+    auto operator<=>(const s1&) const = default;
+    bool operator==(const s1&) const = default;
 };
 // GLZ_META(s1, command, username, password, identity, subject_name, chapter_name, question_id, question_text, bulletin_name, teacher_name, bulletin_text);
 template <>
@@ -139,7 +148,9 @@ public:
     void shutdown();
     void init();
     // void loop(db_user&);
-    void loop();
+    void loop(int timeout_ms = -1);
+    void run(std::stop_token st);
+    std::jthread start_in_thread();
 
     //callback setters
     void onConnect(void (*ncc)(uint16_t fd));
@@ -186,13 +197,15 @@ private:
     vector<std::shared_ptr<db_user>> users;
     vector<std::shared_ptr<question_bank>> questions;
 
-    mutable std::recursive_mutex state_mutex;
+    mutable std::shared_mutex state_mutex;
     unordered_map<int, string> bindIdentity;
     unordered_map<int, string> bindUsername;
     unordered_set<string> usernameSet;
     unordered_map<string, int> logined_users;
 
     unordered_map<int, vector<string>> archived_msg;
+
+    async::Task<vector<string>> processRequestAsync(s1 request, shared_ptr<db_user> user_db, shared_ptr<question_bank> question_db, Connector conn, string client_identity, string client_username);
 
     void (*newConnectionCallback) (uint16_t fd);
     void (*receiveCallback) (uint16_t fd, char *buffer);

@@ -1,7 +1,14 @@
-version: "1.0"
 services:
   tcp-server:
     build:
       context: .
       dockerfile: Dockerfile
-    command: sh -c "cd Back-end/bin && ./cplusplusproject2022fall"
+    container_name: cplusplus_management_server
+    ports:
+      - "9999:9999"
+    volumes:
+      - server_data:/app
+    restart: unless-stopped
+
+volumes:
+  server_data:

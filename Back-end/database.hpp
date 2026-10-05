@@ -15,6 +15,8 @@
 #include <set>
 #include <variant>
 #include <optional>
+#include <expected>
+#include <compare>
 #include <iostream>
 #include <cstddef>
 #include <concepts>
@@ -147,6 +149,39 @@ class database{
             }
             output.shrink_to_fit();
             sqlite3_finalize(stmt);
+            stmt = nullptr;
+            return output;
+        }
+
+        template<hashable T = string>
+        std::expected<vector<T>, string> execute_query(const string& sql) {
+            if(!db) {
+                return std::unexpected("Database connection is not initialized.");
+            }
+            int prep_rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
+            if(prep_rc != SQLITE_OK) {
+                string err = sqlite3_errmsg(db);
+                return std::unexpected("SQL prepare failed: " + err);
+            }
+            int num_cols;
+            vector<T> output;
+            output.reserve(20);
+            while(sqlite3_step(stmt) == SQLITE_ROW){
+                num_cols = sqlite3_column_count(stmt);
+                for(int i = 0; i < num_cols; i++){
+                    if constexpr(std::is_same_v<T, std::string>) {
+                        const unsigned char* text = sqlite3_column_text(stmt, i);
+                        output.push_back(text ? std::string(reinterpret_cast<const char*>(text)) : std::string());
+                    } else if constexpr(std::is_same_v<T, int>) {
+                        output.push_back(sqlite3_column_int(stmt, i));
+                    } else if constexpr(std::is_same_v<T, double> || std::is_same_v<T, float>) {
+                        output.push_back(sqlite3_column_double(stmt, i));
+                    }
+                }
+            }
+            output.shrink_to_fit();
+            sqlite3_finalize(stmt);
+            stmt = nullptr;
             return output;
         }
 

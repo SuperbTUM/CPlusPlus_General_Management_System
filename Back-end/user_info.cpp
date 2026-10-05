@@ -183,6 +183,7 @@ string db_user::checkType(string target_attribute){
    }
    transform(res.begin(), res.end(), res.begin(), ::toupper);
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    return res;
 }
 
@@ -209,6 +210,7 @@ string db_user::getUserAttribute(string& primary_val, string& target_attribute, 
          }
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(bytes) return res;
    else return {};
 }
@@ -264,6 +266,7 @@ int db_user::count(){
       output.insert(output.end(), row.begin(), row.end());
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(output.empty()) return -1;
    return output[0];
 }
@@ -285,6 +288,7 @@ int db_user::countDistinct(const string& target_attribute, pair<string, variant<
       output.insert(output.end(), row.begin(), row.end());
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(output.empty()) return -1;
    return output[0];
 }
@@ -314,6 +318,33 @@ void db_user::clean(){
       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    } else {
       fprintf(stdout, "Table dropped successfully\n");
+   }
+}
+
+async::Generator<UserInfo<string>> db_user::streamUsers(optional<pair<string, string>> constraint) {
+   string query = constraint.has_value()
+       ? fmt::format("SELECT USERNAME, PASSWORD, IDENTITY, STATUS, ACTIVITY FROM USER WHERE {} = '{}';", constraint->first, constraint->second)
+       : "SELECT USERNAME, PASSWORD, IDENTITY, STATUS, ACTIVITY FROM USER;";
+
+   sqlite3_stmt* cursor = nullptr;
+   if (sqlite3_prepare_v2(db, query.c_str(), -1, &cursor, nullptr) == SQLITE_OK) {
+      while (sqlite3_step(cursor) == SQLITE_ROW) {
+         const char* u = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 0));
+         const char* p = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 1));
+         const char* id = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 2));
+         const char* st = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 3));
+         int act = sqlite3_column_int(cursor, 4);
+
+         UserInfo<string> user(
+             u ? u : "",
+             p ? p : "",
+             id ? id : "",
+             st ? st : "",
+             act
+         );
+         co_yield user;
+      }
+      sqlite3_finalize(cursor);
    }
 }
 

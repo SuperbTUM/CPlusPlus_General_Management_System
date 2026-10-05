@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.dockerignore
+Front-end
+Test
+Back-end/build
+Back-end/bin
+Back-end/lib
+Back-end/_deps
+*.db
+*.db-shm
+*.db-wal
+.DS_Store

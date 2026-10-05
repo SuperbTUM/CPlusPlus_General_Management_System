@@ -1,0 +1,14 @@
+# Build directories
+build/
+bin/
+lib/
+_deps/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# OS artifacts
+.DS_Store
+Thumbs.db

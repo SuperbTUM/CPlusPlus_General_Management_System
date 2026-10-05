@@ -1,27 +1,28 @@
 #pragma once
 #include "database.hpp"
+#include "coroutine_task.hpp"
 #pragma comment(lib, "sqlite3.lib")
 using namespace std;
 
+#ifndef FMT_HEADER_ONLY
 #define FMT_HEADER_ONLY
+#endif
 #include "fmt/format.h"
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 inline string& encrypt_password(string& password) {
-    unsigned char hash[MD5_DIGEST_LENGTH];
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    size_t length = 0;
 
-    MD5_CTX md5;
-    MD5_Init(&md5);
-    MD5_Update(&md5, password.c_str(), password.size());
-    MD5_Final(hash, &md5);
-
-    char hex[MD5_DIGEST_LENGTH * 2 + 1];
-    for (int i = 0; i < MD5_DIGEST_LENGTH; i++) {
-        snprintf(hex + i * 2, 3, "%02x", hash[i]);
+    if (EVP_Q_digest(nullptr, "SHA256", nullptr, password.data(), password.size(), hash, &length)) {
+        char hex[EVP_MAX_MD_SIZE * 2 + 1];
+        for (size_t i = 0; i < length; i++) {
+            snprintf(hex + i * 2, 3, "%02x", hash[i]);
+        }
+        hex[length * 2] = '\0';
+        password = string(hex);
     }
-    hex[MD5_DIGEST_LENGTH * 2] = '\0';
-    password = string(hex);
     return password;
 }
 
@@ -52,6 +53,8 @@ struct UserInfo final {
                 return *this;
             }
             std::tuple<string, string, T, T, int> getElements() const {return std::make_tuple(username, password, identity, status, activity);};
+            auto operator<=>(const UserInfo<T>&) const = default;
+            bool operator==(const UserInfo<T>&) const = default;
         };
 
 class db_user: public database{
@@ -112,6 +115,7 @@ class db_user: public database{
             return sqlexec<T>(sql);
         }
 
+        async::Generator<UserInfo<string>> streamUsers(optional<pair<string, string>> constraint = std::nullopt);
         int count();
         int countDistinct(const string& target_attribute, pair<string, variant<string, int, double>> count_info);
         int delet(const string& primary_val, pair<string, variant<string, int, double>> deleted_info);

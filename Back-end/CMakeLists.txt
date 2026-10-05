@@ -66,3 +66,23 @@ target_link_libraries(client_ssl PRIVATE
     ssl
     crypto
 )
+
+add_executable(modern_cpp_test test_modern_cpp.cpp)
+target_link_libraries(modern_cpp_test PRIVATE
+    fmt::fmt-header-only
+    glaze::glaze
+    sqlite3
+    ssl
+    crypto
+    OpenMP::OpenMP_CXX
+)
+
+add_executable(e2e_network_test test_e2e.cpp)
+target_link_libraries(e2e_network_test PRIVATE
+    fmt::fmt-header-only
+    glaze::glaze
+    sqlite3
+    ssl
+    crypto
+    OpenMP::OpenMP_CXX
+)

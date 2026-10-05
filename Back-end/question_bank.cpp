@@ -214,6 +214,7 @@ string question_bank::getQuestionAttribute(optional<pair<string, variant<string,
       }
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(bytes) return res;
    else return {};
 }
@@ -233,6 +234,7 @@ int question_bank::count(){
       output = row;
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    return output;
 }
 
@@ -259,6 +261,7 @@ int question_bank::countDistinct(const string& target_attribute, vector<pair<str
       output.insert(output.end(), row.begin(), row.end());
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(output.empty()) return -1;
    return output[0];
 }
@@ -286,6 +289,7 @@ int question_bank::countDistinct(const string& target_attribute, optional<pair<s
       output.insert(output.end(), row.begin(), row.end());
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    if(output.empty()) return -1;
    return output[0];
 }
@@ -305,6 +309,7 @@ vector<string> question_bank::getQuestionPaths(){
       output.insert(output.end(), row.begin(), row.end());
    }
    sqlite3_finalize(stmt);
+   stmt = nullptr;
    return output;
 }
 
@@ -336,6 +341,47 @@ void question_bank::clean(){
       if(zErrMsg) { sqlite3_free(zErrMsg); zErrMsg = nullptr; }
    } else {
       fprintf(stdout, "Table dropped successfully\n");
+   }
+}
+
+async::Generator<string> question_bank::streamSubjects() {
+   string query = "SELECT DISTINCT SUBJECT FROM QUESTIONS WHERE SUBJECT != 'placeholder';";
+   sqlite3_stmt* cursor = nullptr;
+   if (sqlite3_prepare_v2(db, query.c_str(), -1, &cursor, nullptr) == SQLITE_OK) {
+      while (sqlite3_step(cursor) == SQLITE_ROW) {
+         const char* subj = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 0));
+         if (subj) {
+            co_yield string(subj);
+         }
+      }
+      sqlite3_finalize(cursor);
+   }
+}
+
+async::Generator<QuestionInfo<string>> question_bank::streamQuestions(const string& subject, const string& chapter) {
+   string query = fmt::format(
+       "SELECT PATH, CONTENT, CHAPTER, SUBJECT, RUBRIC FROM QUESTIONS WHERE SUBJECT = '{}' AND CHAPTER = '{}' AND PATH != 'placeholder';",
+       subject, chapter
+   );
+   sqlite3_stmt* cursor = nullptr;
+   if (sqlite3_prepare_v2(db, query.c_str(), -1, &cursor, nullptr) == SQLITE_OK) {
+      while (sqlite3_step(cursor) == SQLITE_ROW) {
+         const char* qid = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 0));
+         const char* cnt = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 1));
+         const char* chp = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 2));
+         const char* sbj = reinterpret_cast<const char*>(sqlite3_column_text(cursor, 3));
+         int rub = sqlite3_column_int(cursor, 4);
+
+         QuestionInfo<string> q(
+             qid ? qid : "",
+             cnt ? cnt : "",
+             chp ? chp : "",
+             sbj ? sbj : "",
+             rub
+         );
+         co_yield q;
+      }
+      sqlite3_finalize(cursor);
    }
 }
 

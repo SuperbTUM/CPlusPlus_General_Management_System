@@ -4,37 +4,40 @@
 #include <omp.h>
 #include <utility>
 #include <span>
+#include <ranges>
+#include <algorithm>
+#include <print>
 using namespace std;
 
 vector<string>& helper(vector<string>& msg, string&& keyword) {
     auto formatting = [&](string a) constexpr -> string{return (keyword == "code" || keyword == "counts")? fmt::format("{{\"{}\":{}}}", keyword, a): fmt::format("{{\"{}\":\"{}\"}}", keyword, a);};
-    std::transform(msg.begin(), msg.end(), msg.begin(), formatting);
+    std::ranges::transform(msg, msg.begin(), formatting);
     return msg;
 }
 
 Server::Server()
 {
     users.resize(max_concurrency);
-    std::for_each(users.begin(), users.end(), [](std::shared_ptr<db_user> &ptr)
-        {ptr = std::make_shared<db_user>();}
-    );
+    std::ranges::for_each(users, [](std::shared_ptr<db_user> &ptr) {
+        ptr = std::make_shared<db_user>();
+    });
     questions.resize(max_concurrency);
-    std::for_each(questions.begin(), questions.end(), [](std::shared_ptr<question_bank> &ptr)
-        {ptr = std::make_shared<question_bank>();}
-    );
+    std::ranges::for_each(questions, [](std::shared_ptr<question_bank> &ptr) {
+        ptr = std::make_shared<question_bank>();
+    });
     setup(DEFAULT_PORT);
 }
 
 Server::Server(int port)
 {   
     users.resize(max_concurrency);
-    std::for_each(users.begin(), users.end(), [](std::shared_ptr<db_user> &ptr)
-        {ptr = std::make_shared<db_user>();}
-    );
+    std::ranges::for_each(users, [](std::shared_ptr<db_user> &ptr) {
+        ptr = std::make_shared<db_user>();
+    });
     questions.resize(max_concurrency);
-    std::for_each(questions.begin(), questions.end(), [](std::shared_ptr<question_bank> &ptr)
-        {ptr = std::make_shared<question_bank>();}
-    );
+    std::ranges::for_each(questions, [](std::shared_ptr<question_bank> &ptr) {
+        ptr = std::make_shared<question_bank>();
+    });
     setup(port);
 }
 
@@ -179,7 +182,7 @@ void Server::handleNewConnection()
 }
 
 void Server::sendMsgToExisting(Connector& connect_fd, span<const string> messages){
-    std::lock_guard<std::recursive_mutex> lock(state_mutex);
+    std::unique_lock<std::shared_mutex> lock(state_mutex);
     vector<string> resend_buffer;
     if(messages.empty()) {
         // resend
@@ -224,7 +227,7 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
         epoll_ctl(eFd, EPOLL_CTL_DEL, fd, nullptr);
         close(fd);
         {
-            std::lock_guard<std::recursive_mutex> lock(state_mutex);
+            std::unique_lock<std::shared_mutex> lock(state_mutex);
             auto it = bindUsername.find(fd);
             if (it != bindUsername.end()) {
                 logined_users.erase(it->second);
@@ -238,18 +241,49 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     #ifdef SERVER_DEBUG
     printf("[SERVER] [RECV] Received '%s' from client!\n", input_buffer);
     #endif
-    // receiveCallback(fd,input_buffer);
     // authenticate the identity of the user
-    // json recv_message = json::parse(input_buffer);
     s1 recv_struct{};
-    glz::read<glz::opts{.error_on_unknown_keys = false}>(recv_struct, input_buffer);
+    if (auto ec = glz::read<glz::opts{.error_on_unknown_keys = false}>(recv_struct, input_buffer)) {
+        std::println(stderr, "[SERVER] JSON parse error: {}", glz::format_error(ec, input_buffer));
+        return make_tuple<vector<string>, Connector>(std::move(messages), std::move(connect_fd));
+    }
     
-    // parse information
+    string client_identity;
+    string client_username;
+    int teacher_target_fd = -1;
+    {
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
+        auto it_id = bindIdentity.find(connect_fd.getFd());
+        if (it_id != bindIdentity.end()) client_identity = it_id->second;
+        auto it_un = bindUsername.find(connect_fd.getFd());
+        if (it_un != bindUsername.end()) client_username = it_un->second;
+        if (recv_struct.command == "write bulletin") {
+            auto it_teacher = logined_users.find(recv_struct.teacher_name);
+            if (it_teacher != logined_users.end()) teacher_target_fd = it_teacher->second;
+        }
+    }
+
+    auto task = processRequestAsync(recv_struct, cur_user, cur_question, connect_fd, client_identity, client_username);
+    messages = task.run_sync();
+
+    Connector target_connector;
+    if(recv_struct.command == "write bulletin" && teacher_target_fd != -1) target_connector = Connector(teacher_target_fd);
+    else target_connector = Connector(connect_fd);
+    return make_tuple<vector<string>, Connector>(std::move(messages), std::move(target_connector));
+}
+
+async::Task<vector<string>> Server::processRequestAsync(
+    s1 recv_struct,
+    std::shared_ptr<db_user> cur_user,
+    std::shared_ptr<question_bank> cur_question,
+    Connector connect_fd,
+    string client_identity,
+    string client_username
+) {
     auto command = recv_struct.command;
     string username = recv_struct.username;
     string password = recv_struct.password;
     string identity = recv_struct.identity;
-    // string status = "";
     string subject_name = recv_struct.subject_name;
     string chapter_name = recv_struct.chapter_name;
     string question_id = recv_struct.question_id;
@@ -258,20 +292,7 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
     string teacher_name = recv_struct.teacher_name;
     string bulletin_text = recv_struct.bulletin_text;
 
-    string client_identity;
-    string client_username;
-    int teacher_target_fd = -1;
-    {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
-        auto it_id = bindIdentity.find(connect_fd.getFd());
-        if (it_id != bindIdentity.end()) client_identity = it_id->second;
-        auto it_un = bindUsername.find(connect_fd.getFd());
-        if (it_un != bindUsername.end()) client_username = it_un->second;
-        if (command == "write bulletin") {
-            auto it_teacher = logined_users.find(teacher_name);
-            if (it_teacher != logined_users.end()) teacher_target_fd = it_teacher->second;
-        }
-    }
+    vector<string> messages;
 
     if(command == "login"){
         messages = authenticateUser(cur_user, connect_fd, username, password);
@@ -326,7 +347,6 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
         messages = deleteBulletin(cur_question, bulletin_name);
     }
     else{
-        // cout<<"Invalid command or not enough permission."<<endl;
         fmt::print("Invalid command or not enough permission.\n");
         const int status_code = 403;
         #ifdef __cpp_lib_format
@@ -335,13 +355,9 @@ tuple<vector<string>, Connector> Server::recvInputFromExisting(std::shared_ptr<d
         string message = fmt::format("{{\"code\": {}}}", status_code);
         #endif
         messages.emplace_back(std::forward<string>(message));
-    } 
-    //memset(&input_buffer, 0, INPUT_BUFFER_SIZE); //zero buffer //bzero
-    // bzero(&input_buffer,INPUT_BUFFER_SIZE); //clear input buffer
-    Connector target_connector;
-    if(command == "write bulletin" && teacher_target_fd != -1) target_connector = Connector(teacher_target_fd);
-    else target_connector = Connector(connect_fd);
-    return make_tuple<vector<string>, Connector>(std::move(messages), std::move(target_connector));
+    }
+
+    co_return messages;
 }
 
 vector<string> Server::readBulletin(shared_ptr<question_bank> cur_question, string& bulletin_name) {
@@ -403,7 +419,7 @@ vector<string> Server::authenticateUser(std::shared_ptr<db_user> cur_user, Conne
     messages.emplace_back(std::forward<string>(message));
     
     if(status_code == 200) {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         bindIdentity[connect_fd.getFd()] = identity;
         bindUsername[connect_fd.getFd()] = username;
         logined_users[username] = connect_fd.getFd();
@@ -432,7 +448,7 @@ vector<string> Server::registerUser(std::shared_ptr<db_user> cur_user, Connector
     // messages.push_back(std::move(message));
     messages.emplace_back(std::forward<string>(message));
     if(status_code == 200) {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         usernameSet.insert(username);
     }
     return messages;
@@ -444,7 +460,7 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
     int activity_updated = 0;
     string username;
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
         auto it = bindUsername.find(connect_fd.getFd());
         if (it != bindUsername.end()) username = it->second;
     }
@@ -457,7 +473,7 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
         status_code = 403;
     }
     else {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         bindUsername.erase(connect_fd.getFd());
         bindIdentity.erase(connect_fd.getFd());
         if (!username.empty()) logined_users.erase(username);
@@ -477,7 +493,7 @@ vector<string> Server::logout(std::shared_ptr<db_user> cur_user, Connector& conn
 int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
     int source_fd = -1;
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
         auto it = logined_users.find(username);
         if(it == logined_users.end()){
             return -1;
@@ -491,7 +507,7 @@ int Server::logout(std::shared_ptr<db_user> cur_user, string& username){
         // cout<<"logout failed."<<endl;
         fmt::print("logout failed.\n");
     } else {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         logined_users.erase(username);
         if (source_fd != -1) {
             bindIdentity.erase(source_fd);
@@ -542,7 +558,7 @@ vector<string> Server::deleteUser(std::shared_ptr<db_user> cur_user, Connector& 
     int status_code = 200;
 
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         auto un = usernameSet.find(username);
         if(un != usernameSet.end()) {
             status_code = 200;
@@ -584,7 +600,7 @@ vector<string> Server::deleteUserSelf(std::shared_ptr<db_user> cur_user, Connect
     int status_code = 200;
 
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::unique_lock<std::shared_mutex> lock(state_mutex);
         int fd = connect_fd.getFd();
         auto identity_iter = bindIdentity.find(fd);
         if(identity_iter == bindIdentity.end()){
@@ -751,7 +767,7 @@ vector<string> Server::addSubject(std::shared_ptr<question_bank> cur_question, s
     vector<string> messages;
     bool existence = false;
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
         if(subject_cache.contains(subject)) {
             existence = true;
         }
@@ -777,7 +793,7 @@ vector<string> Server::addSubject(std::shared_ptr<question_bank> cur_question, s
         if(rc < 0) status_code = 403;
         else {
             status_code = 200;
-            std::lock_guard<std::recursive_mutex> lock(state_mutex);
+            std::unique_lock<std::shared_mutex> lock(state_mutex);
             subject_cache.insert(subject);
             if(subject_count_cache >= 0) subject_count_cache ++;
         } 
@@ -802,7 +818,7 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
     const string target_attribute = "chapter";
     bool existence = false;
     {
-        std::lock_guard<std::recursive_mutex> lock(state_mutex);
+        std::shared_lock<std::shared_mutex> lock(state_mutex);
         if(subject_cache.contains(subject)) {
             existence = true;
         }
@@ -819,7 +835,7 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
     if(existence) {
         bool chapter_exists = false;
         {
-            std::lock_guard<std::recursive_mutex> lock(state_mutex);
+            std::shared_lock<std::shared_mutex> lock(state_mutex);
             if(chapter_cache.contains(subject) && chapter_cache[subject].contains(chapter)) {
                 chapter_exists = true;
             }
@@ -838,7 +854,7 @@ vector<string> Server::addChapter(std::shared_ptr<question_bank> cur_question, s
             if(rc < 0) status_code = 403;
             else {
                 status_code = 200;
-                std::lock_guard<std::recursive_mutex> lock(state_mutex);
+                std::unique_lock<std::shared_mutex> lock(state_mutex);
                 chapter_cache[subject].insert(chapter);
             }
         } else {
@@ -991,14 +1007,31 @@ vector<string> Server::deleteQuestion(std::shared_ptr<question_bank> cur_questio
     return messages;
 }
 
-void Server::loop()
+void Server::run(std::stop_token st)
+{
+    while(!st.stop_requested()) {
+        loop(100);
+    }
+    shutdown();
+}
+
+std::jthread Server::start_in_thread()
+{
+    return std::jthread([this](std::stop_token st) {
+        this->run(st);
+    });
+}
+
+void Server::loop(int timeout_ms)
 {
     //no problems, we're all set
-    int eNum = epoll_wait(eFd, events, EVENTS_SIZE, -1);
+    int eNum = epoll_wait(eFd, events, EVENTS_SIZE, timeout_ms);
     if(eNum == -1) {
-        // cout<<"epoll wait"<<endl; 
-        fmt::print("epoll wait\n");
+        if(errno == EINTR) return;
         return;
+    }
+    if(eNum == 0) {
+        return; // timeout reached, allows cooperative cancellation check
     }
 
     // Handle new incoming connections on master socket first sequentially
@@ -1024,7 +1057,7 @@ void Server::loop()
             epoll_ctl(eFd, EPOLL_CTL_DEL, closed_fd, nullptr);
             close(closed_fd);
             {
-                std::lock_guard<std::recursive_mutex> lock(state_mutex);
+                std::unique_lock<std::shared_mutex> lock(state_mutex);
                 auto it = bindUsername.find(closed_fd);
                 if (it != bindUsername.end()) {
                     logined_users.erase(it->second);
@@ -1136,35 +1169,38 @@ shared_ptr<Server> Server::getInstance() {
 }
 
 
+#ifndef SERVER_NO_MAIN
+static std::atomic<bool> g_stop_requested{false};
+inline void handle_sigint(int) {
+    g_stop_requested.store(true);
+}
+
 int main(int argc, char* argv[]){
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
-    // activate signal handling
+
     struct sigaction sigIntHandler;
-    sigIntHandler.sa_handler = sig_to_exception;
+    sigIntHandler.sa_handler = handle_sigint;
     sigemptyset(&sigIntHandler.sa_mask);
     sigIntHandler.sa_flags = 0;
     sigaction(SIGINT, &sigIntHandler, NULL);
+    sigaction(SIGTERM, &sigIntHandler, NULL);
 
-    // Server server_object = Server();
     int port = (argc > 1) ? atoi(argv[1]) : DEFAULT_PORT;
     shared_ptr<Server> server_object = Server::getInstance(port);
     server_object->init();
-    try {
-        while(true){
-            server_object->loop();
-        }
-    } catch (const InterruptException& e1) {
-        server_object->shutdown();
-        // cout<<"Ctrl-C terminate."<<endl;
-        fmt::print("Ctrl-C terminate.\n");
-        return -1;
+
+    std::println("[SERVER] Starting server worker thread via std::jthread on port {}...", port);
+    std::jthread server_thread = server_object->start_in_thread();
+
+    while(!g_stop_requested.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    
-    catch (std::exception& e2) {
-        server_object->shutdown();
-        return 1;
-    }
-    
+
+    std::println("\n[SERVER] Signal received. Requesting cooperative stop...");
+    server_thread.request_stop();
+    // server_thread automatically joins via RAII destructor
+    std::println("[SERVER] Server worker thread joined cleanly. Exiting.");
     return 0;
 }
+#endif

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "database.hpp"
+#include "coroutine_task.hpp"
 using namespace std;
 
+#ifndef FMT_HEADER_ONLY
 #define FMT_HEADER_ONLY
+#endif
 #include "fmt/format.h"
 
 template <hashable T>
@@ -18,8 +21,9 @@ struct QuestionInfo final {
             QuestionInfo() {}
             QuestionInfo(string path_, string content_, string chapter_, T category_): path(path_), content(content_), chapter(chapter_), category(category_), rubric(0) {};
             QuestionInfo(string path_, string content_, string chapter_, T category_, int rubric_): path(path_), content(content_), chapter(chapter_), category(category_), rubric(rubric_) {};
-            QuestionInfo(const QuestionInfo<T>& newquestion): path(newquestion.path), content(newquestion.content), chapter(newquestion.chapter), category(newquestion.category), rubric(newquestion.rubric) {};
             std::tuple<string, string, string, T, int> getElements() const {return std::make_tuple(path, content, chapter, category, rubric);};
+            auto operator<=>(const QuestionInfo<T>&) const = default;
+            bool operator==(const QuestionInfo<T>&) const = default;
         };
 
 class question_bank: public database{
@@ -105,6 +109,8 @@ class question_bank: public database{
         }
 
         string getQuestion(optional<pair<string, variant<string, int, double>>> constraint, string& primary_val);
+        async::Generator<string> streamSubjects();
+        async::Generator<QuestionInfo<string>> streamQuestions(const string& subject, const string& chapter);
         int count();
         int countDistinct(const string& target_attribute, optional<pair<string, variant<string, int, double>>> count_info);
         int countDistinct(const string& target_attribute, vector<pair<string, string>> count_info);
